@@ -1,3 +1,4 @@
+.vscode
 # Prerequisites
 *.d
 
@@ -18,7 +19,7 @@
 
 # Libraries
 *.lib
-*.a
+#*.a
 *.la
 *.lo
 

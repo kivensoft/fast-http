@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<property scope="context" name="logFileName" value="logs/ks-shop-api" />
+	<property scope="context" name="warnFileName" value="logs/warn-ks-shop-api" />
+
+	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder>
+			<!-- %.-1level 只显示信息级别的首字母,%-5level 左对齐显示信息级别全称 -->
+			<!-- 如需自定义关键字，用 %mdc{键名} 表示,程序中用MDC.put("键名","键值")设置，可动态设置-->
+			<!-- pattern>[%date{HH:mm:ss}] [%-5level] [%logger{0}:%method:%line] - %msg%n</pattern-->
+			<pattern>[%date{HH:mm:ss}] [%-5level] [%class{0}:%method:%line] - %msg%n</pattern>
+		</encoder>>
+	</appender>
+
+	<!-- %-40(%-35logger{35}:%-4line) -->
+	<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<file>${logFileName}.log</file>
+		<rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+			<FileNamePattern>${logFileName}-%d{yyyyMMdd}.log</FileNamePattern>
+			<maxHistory>30</maxHistory>
+			<totalSizeCap>1GB</totalSizeCap>
+		</rollingPolicy>
+		<encoder>
+			<Pattern>[%date{yyyy-MM-dd HH:mm:ss}] [%-5level] [%class:%method:%line] - %msg%n</Pattern>
+		</encoder>>
+	</appender>
+
+	<appender name="WARN_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<file>${warnFileName}.log</file>
+		<rollingPolicy class="ch.qos.logback.core.rolling.FixedWindowRollingPolicy">
+			<FileNamePattern>${logFileName}-%i.log</FileNamePattern>
+			<minIndex>1</minIndex>   
+			<maxIndex>3</maxIndex>  
+		</rollingPolicy>
+		<triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">   
+			<maxFileSize>10MB</maxFileSize>   
+		</triggeringPolicy> 
+		<filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+			<level>WARN</level>
+		</filter>
+		<encoder>
+			<Pattern>[%date{yyyy-MM-dd HH:mm:ss}] [%-5level] [%class:%method:%line] - %msg%n</Pattern>
+		</encoder>
+	</appender>
+
+	<logger name="cn.kivensoft" level="DEBUG"/>
+	<logger name="cn.kivensoft.vertx.RestClassData" level="INFO"/>
+	<logger name="cn.kivensoft.vertx.XmlSql" level="INFO"/>
+	<logger name="io.vertx.mysqlclient.impl.MySQLCollation" level="ERROR"/>
+
+	<root level="INFO">
+		<appender-ref ref="STDOUT"/>
+		<appender-ref ref="FILE"/>
+		<appender-ref ref="WARN_FILE"/>
+	</root>
+
+</configuration>
