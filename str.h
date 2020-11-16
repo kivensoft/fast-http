@@ -53,7 +53,7 @@ extern string_t* string_malloc(uint32_t capacity);
  * @param src           增加引用的string_t
 */
 static inline string_t* string_copy(string_t* src) {
-    if (src) ++src->ref;
+    ++src->ref;
     return src;
 }
 
@@ -61,7 +61,7 @@ static inline string_t* string_copy(string_t* src) {
  * @param src           string_t
 */
 static inline void string_free(string_t* src) {
-    if (src && src->ref && !--src->ref)
+    if (src->ref && !--src->ref)
         free(src);
 }
 
@@ -75,7 +75,7 @@ extern void string_frees(size_t count, ...);
  * @return              c风格字符串地址
 */
 static inline char* string_cstr(string_t* src) {
-    return src ? src->data : NULL;
+    return src->data;
 }
 
 /** 返回string_t的长度
@@ -83,7 +83,7 @@ static inline char* string_cstr(string_t* src) {
  * @return              字符串长度
 */
 static inline uint32_t string_len(string_t* src) {
-    return src ? src->len : 0;
+    return src->len;
 }
 
 /** 返回string_t的容量
@@ -91,7 +91,7 @@ static inline uint32_t string_len(string_t* src) {
  * @return              字符串容量
 */
 static inline uint32_t string_cap(string_t* src) {
-    return src ? src->cap : 0;
+    return src->cap;
 }
 
 /** 返回string_t的引用计数
@@ -99,7 +99,7 @@ static inline uint32_t string_cap(string_t* src) {
  * @return              引用计数
 */
 static inline uint32_t string_ref(string_t* src) {
-    return src ? src->ref : 0;
+    return src->ref;
 }
 
 /** 缩减字符串长度，通常用于截断
@@ -107,13 +107,11 @@ static inline uint32_t string_ref(string_t* src) {
  * @param count         缩减长度
 */
 static inline void string_trim(string_t *src, uint32_t count) {
-    if (src) {
-        uint32_t len = src->len;
-        if (len < count) count = len;
-        len -= count;
-        src->len = len;
-        src->data[len] = '\0';
-    }
+    uint32_t len = src->len;
+    if (len < count) count = len;
+    len -= count;
+    src->len = len;
+    src->data[len] = '\0';
 }
 
 /** 分配string_t空间，原始内容为src内容

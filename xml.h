@@ -9,21 +9,20 @@
 extern "C" {
 #endif
 
-typedef enum {
+typedef enum xml_on_type_t {
     XML_ON_ELEMENT_BEGIN, XML_ON_ATTR_NAME, XML_ON_ATTR_VALUE, XML_ON_CHARACTERS, XML_ON_ELEMENT_END
 } xml_on_type_t;
 
 typedef void (*xml_callback_t) (xml_on_type_t type, const char* at, size_t len, _Bool isContinue);
 
 typedef enum {
-    XML_DOC_BEGIN,
-    XML_ELEMENT_BEGIN,
-    XML_ATTRIBUTE_BEGIN,
-    XML_ATTRIBUTE_END,
-    XML_CHARACTERS_BEGIN,
-    XML_CHARACTERS_END,
-    XML_ELEMENT_END,
-    XML_DOC_END
+    XML_ON_DOCTYPE,
+    XML_ON_ELEMENT_BEGIN,
+    XML_ON_ATTRIBUTE,
+    XML_ON_VALUE,
+    XML_ON_CHARACTERS,
+    XML_ON_ELEMENT_END,
+    XML_ON_PARSER_ERROR
 } xml_parser_state_t;
 
 typedef struct {
@@ -32,11 +31,9 @@ typedef struct {
     xml_callback_t on_callback;
 } xml_parser_t;
 
-extern void xml_parser_init(xml_parser_t* parser);
+extern void xml_parser_init(xml_parser_t* parser, xml_callback_t callback);
 
-extern bool xml_update(xml_parser_t* parser, const char* src, size_t src_len);
-
-extern bool xml_final(xml_parser_t* parser, const char* src, size_t src_len);
+extern void xml_parser(xml_parser_t* parser, const char* src, size_t src_len);
 
 #ifdef __cplusplus
 }

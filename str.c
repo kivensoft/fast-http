@@ -152,6 +152,7 @@ string_t* string_cats(string_t* dst, size_t count, ...) {
 
 string_t* string_join(string_t* dst, const string_t* src) {
     uint32_t len, cap;
+    // 源字符串长度
     len = src ? src->len : 0;
     if (dst) {
         len += dst->len;
@@ -160,6 +161,7 @@ string_t* string_join(string_t* dst, const string_t* src) {
         cap = 0;
     }
 
+    // 加上追加的字符串，如果容量不足，则重新分配空间
     if (cap < len) {
         string_t* p = string_malloc(len);
         if (dst) {
@@ -180,6 +182,7 @@ string_t* string_join(string_t* dst, const string_t* src) {
 
 string_t* string_joins(string_t* dst, size_t count, ...) {
     uint32_t len, cap;
+    // 原有字符串长度
     if (dst) {
         len = dst->len;
         cap = dst->cap;
@@ -188,6 +191,7 @@ string_t* string_joins(string_t* dst, size_t count, ...) {
         cap = 0;
     }
 
+    // 计算多个参数的字符串总长度
     va_list args;
     va_start(args, count);
     for (unsigned i = 0, imax = count; i < imax; ++i) {
@@ -197,6 +201,7 @@ string_t* string_joins(string_t* dst, size_t count, ...) {
     }
     va_end(args);
 
+    // 如果源字符串容量不足，则扩展源字符串空间
     if (cap < len) {
         string_t* p = string_malloc(len);
         if (dst) {
@@ -207,6 +212,7 @@ string_t* string_joins(string_t* dst, size_t count, ...) {
         dst = p;
     }
 
+    // 将参数的内容挨个追加到源字符串中
     char* pdata = dst->data;
     uint32_t pos = dst->len;
     va_start(args, count);
