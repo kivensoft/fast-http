@@ -43,8 +43,8 @@
 extern "C" {
 #endif
 
-#define RB_RED		0
-#define RB_BLACK    1
+// #define RB_RED		0
+// #define RB_BLACK    1
 
 // 节点结构
 typedef struct rb_node_t {

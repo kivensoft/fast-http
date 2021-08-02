@@ -36,7 +36,7 @@ void str_grow(str_t* self, uint32_t capacity) {
 
     memcpy(p, s->data, s->len + 1);
     STR_OFFSET_HEAD(p)->len = s->len;
-    str_free(s);
+    str_free(*self);
 
     *self = p;
 }
@@ -78,7 +78,7 @@ void string_cats(str_t* self, int count, ...) {
 
     if (cap < len) str_grow(self, len);
 
-    char *pos = self + STR_OFFSET_HEAD(self)->len;
+    char *pos = *self + STR_OFFSET_HEAD(*self)->len;
     va_start(args, count);
     for (int i = 0, imax = count; i < imax; ++i) {
         uint32_t al = args_len[i];

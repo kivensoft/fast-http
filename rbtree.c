@@ -247,7 +247,7 @@ void rb_erase(rb_node_t *node, rb_root_t *root) {
 		root->rb_node = child;
 
  color:
-	if (color == RB_BLACK)
+	if (color == 1 /*RB_BLACK*/)
 		__rb_erase_color(child, parent, root);
 }
 

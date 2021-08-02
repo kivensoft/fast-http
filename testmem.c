@@ -63,7 +63,7 @@ static uint32_t write_http_header(httpctx_t* pctx) {
     }
 
     // 处理其他头部字段
-    http_headers_t* hpos;
+    http_header_node_t* hpos;
     list_for_each_ex(hpos, &res->headers) {
         http_header_t* p = &hpos->data;
         buffer_copyfrom(pbuf, &p->field);

@@ -10,7 +10,7 @@ extern "C" {
 
 /** 双向链表节点 */
 typedef struct list_head_t {
-    LIST_FIELDS;
+    struct list_head_t *prev, *next;
 } list_head_t;
 
 /** 初始化节点：设置name节点的前继节点和后继节点都是指向name本身 */

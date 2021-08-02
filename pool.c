@@ -8,11 +8,16 @@
 #define PC (1 << PB)
 #define PM (PC - 1)
 
+typedef struct _pool_list_t {
+    struct _pool_list_t     *prev, *next;
+} _pool_list_t;
+
 struct _pool_head_t {
-    uint32_t    capacity;       // 内存池容量, 指定内存池总共有多少个分配对象, 容量总是以32倍数对齐
-    uint32_t    size;           // 分配对象大小
-    uint32_t    last;           // 最后操作的索引值，保存该值是为了加快分配速度
-    uint8_t     data[];         // 内存池位图数组及内存池地址，内存池位图数组大小为capacity/32, 内存池大小为capacity*size
+    uint32_t        capacity;       // 内存池容量, 指定内存池总共有多少个分配对象, 容量总是以32倍数对齐
+    uint32_t        size;           // 分配对象大小
+    uint32_t        last;           // 最后操作的索引值，保存该值是为了加快分配速度
+    _pool_list_t    head;           // 动态分配的对象链表
+    uint8_t         data[];         // 内存池位图数组及内存池地址，内存池位图数组大小为capacity/32, 内存池大小为capacity*size
 };
 
 pool_t pool_malloc(uint32_t capacity, uint32_t size) {
@@ -26,16 +31,22 @@ pool_t pool_malloc(uint32_t capacity, uint32_t size) {
     pool_t pool = (pool_t) calloc(pool_size, 1);
     pool->capacity = capacity;
     pool->size = size;
+    pool->head.prev = &pool->head;
+    pool->head.next = &pool->head;
 
     return pool;
 }
 
 void pool_free(pool_t self) {
+    _pool_list_t *head = &self->head, *pos = head->prev, *tmp = pos->prev;
+    for (; pos != head; pos = tmp, tmp = pos->prev) {
+        free(pos);
+    }
     free(self);
 }
 
-/** 从内存池获取可用对象, 内存池使用满了之后，返回NULL */
-void* pool_tryget(pool_t self) {
+/** 从内存池获取可用对象, 内存池使用满了后，使用malloc进行分配 */
+void* pool_get(pool_t self) {
     uint32_t *bits = (uint32_t*)(self->data), bits_cap = self->capacity >> PB;
 
     // 从位图检索可用的项
@@ -53,13 +64,17 @@ void* pool_tryget(pool_t self) {
     }
 
     self->last = bits_cap; // 内存池已经全部被使用，设置last为无效索引
-    return NULL;
-}
 
-/** 从内存池获取可用对象, 内存池使用满了后，使用malloc进行分配 */
-void* pool_get(pool_t self) {
-    void* r = pool_tryget(self);
-    return r ? r : malloc(self->size);
+    // 使用malloc进行动态内存分配并加入到链表
+    _pool_list_t *entry = malloc(sizeof(_pool_list_t) + self->size);
+    _pool_list_t *prev = self->head.prev, *next = &self->head;
+
+    next->prev = entry;
+    entry->next = next;
+    entry->prev = prev;
+    prev->next = entry;
+
+    return (void*)entry + sizeof(_pool_list_t);
 }
 
 /** 将使用完毕的对象放回内存池 */
@@ -67,14 +82,22 @@ void pool_put(pool_t self, void* entry) {
     uint32_t cap = self->capacity, size = self->size;
     uint32_t *bits = (uint32_t*)(self->data);
     void* ptr = (void*)bits + (cap >> (PB - PBB));
-    // 如果要归还的项在缓冲范围，则设置位图，否则调用系统free进行释放
+    // 如果要归还的项在缓冲范围，则设置位图，否则对链表进行释放
     if (entry >= ptr && entry < ptr + cap * size) {
         size_t i = (entry - ptr) / size;
         uint32_t last = i >> PB;
         if (self->last > last) self->last = last;
         bits[last] &= ~(1 << (i & PM));
     } else {
-        free(entry);
+        _pool_list_t *head = &self->head, *pos = head->next, *node = entry - sizeof(_pool_list_t);
+        for (; pos != head; pos = pos->next) {
+            if (pos == node) {
+                pos->next->prev = pos->prev;
+                pos->prev->next = pos->next;
+                free(pos);
+                break;
+            }
+        }
     }
 }
 

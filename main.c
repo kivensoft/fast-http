@@ -126,23 +126,23 @@ void on_idle(uv_idle_t *handle) {
 int on_http_serve(httpctx_t* pctx) {
     httpreq_t* preq = &pctx->req;
     httpres_t* pres = &pctx->res;
-    mem_array_t *reqbuf = &preq->data;
+    dynmem_t *reqbuf = &preq->data;
 
     // 获取url
     char path[preq->path.len + 1];
     path[preq->path.len] = '\0';
-    mem_array_read(reqbuf, preq->path.pos, preq->path.len, path);
+    dynmem_read(reqbuf, preq->path.pos, preq->path.len, path);
 
     const char* cct = "application/json; charset=UTF-8";
 
-    if (httpctx_path_match(preq, "/hello/")) {
+    if (httpctx_path_prefix(preq, "/hello/")) {
         httpctx_set_content_type(pctx, "text/plain");
 
         httpctx_body_begin(pctx);
         httpctx_body_append(pctx, "Hello", 5);
         httpctx_body_append(pctx, " World!", 7);
         httpctx_body_end(pctx);
-    } else if (httpctx_path_match(preq, "/index")) {
+    } else if (httpctx_path_prefix(preq, "/index")) {
         httpctx_set_content_type(pctx, cct);
         httpctx_add_header(pctx, "Cookie", "Kiven");
 

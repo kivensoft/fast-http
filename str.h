@@ -46,8 +46,8 @@ typedef char* str_t;
 // 计算str_t所需要的内存
 #define STR_SIZE(x) (sizeof(struct _str_header_t) + (x) + 1)
 
-static inline str_len(const str_t self) { return STR_OFFSET_HEAD(self)->len; }
-static inline str_cap(const str_t self) { return STR_OFFSET_HEAD(self)->cap; }
+static inline uint32_t str_len(const str_t self) { return STR_OFFSET_HEAD(self)->len; }
+static inline uint32_t str_cap(const str_t self) { return STR_OFFSET_HEAD(self)->cap; }
 
 /** str_t引用计数减一，如果引用计数为0，则释放内存 */
 static inline void str_free(str_t self) { free(STR_OFFSET_HEAD(self)); }

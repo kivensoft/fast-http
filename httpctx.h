@@ -7,12 +7,12 @@
 #include <stdbool.h>
 #include <string.h>
 
-#include "uv.h"
 #include "list.h"
-#include "memarray.h"
+#include "dynmem.h"
 #include "pool.h"
 #include "str.h"
 #include "http_parser.h"
+#include "uv.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,29 +59,29 @@ typedef struct http_header_t {
 } http_header_t;
 
 // 头部对象链表节点定义
-typedef struct http_headers_t {
-    list_head_t     node;               // 链表节点结构，包含前节点, 后节点
+typedef struct http_header_node_t {
+    LIST_FIELDS;                        // 链表节点结构，包含前节点, 后节点
     http_header_t   data;               // 自定义的节点数据
-} http_headers_t;
+} http_header_node_t;
 
 // http 请求对象
 typedef struct httpreq_t {
-    uint8_t         version     : 2;    // 协议版本：hc_http_version_t: 1.0/1.1/2.0
-    uint8_t         method      : 2;    // 请求类型, hc_http_method_t：GET/POST/PUT/DELETE
-    uint8_t         keep_alive  : 1;    // 保持连接请求标志
-
     http_value_t    url;                // 请求url
     http_value_t*   host;               // 主机名，没有设置时为NULL
     http_value_t*   content_type;       // 请求内容类型，没有设置时为NULL
     http_value_t    path;               // 解析url得到的path（去除参数）
-    http_value_t    param;              // 解析url得到的param
+    http_value_t    url_param;          // 解析url得到的param
     uint32_t        content_length;     // 请求内容长度
-    list_head_t     headers;            // 请求头部字段链表, 指向http_headers_t结构
+    list_head_t     headers;            // 请求头部字段链表, 指向http_header_node_t结构
     http_value_t    body;               // 请求内容
-    mem_array_t     data;               // 原始请求内容
+    dynmem_t        data;               // 原始请求内容
 
     http_parser     parser;             // 解析器对象
     uint8_t         parser_state;       // 当前解析状态
+
+    uint8_t         version     : 2;    // 协议版本：hc_http_version_t: 1.0/1.1/2.0
+    uint8_t         method      : 2;    // 请求类型, hc_http_method_t：GET/POST/PUT/DELETE
+    uint8_t         keep_alive  : 1;    // 保持连接请求标志
 
     void*           userdata;           // 用户自定义数据，用于用户回调处理请求时链式处理的上下文传递
 } httpreq_t;
@@ -92,13 +92,13 @@ typedef struct httpres_t {
     uint8_t         keep_alive;         // 包含保持连接的标志
     uint32_t        content_length;     // 回复内容长度，
     http_value_t    content_type;       // 回复内容类型
-    list_head_t     headers;            // 回复头部内容链表, 指向http_headers_t结构
+    list_head_t     headers;            // 回复头部内容链表, 指向http_header_node_t结构
     hc_body_type_t  body_type;          // 回复内容类型，直接指向data的内存地址/通过回调实现的分段内容
     union {
         http_value_t    body;           // 回复内容body域的值
         uint32_t (*on_body_cb) (char* buf, uint32_t len); // body回调函数
     };
-    mem_array_t     data;               // 回复内容关联的缓冲区
+    dynmem_t        data;               // 回复内容关联的缓冲区
     uv_buf_t*       write_bufs;         // 回复内容数据区数组，.base = NULL结尾，由tcp服务自行管理内存
 } httpres_t;
 
@@ -112,14 +112,14 @@ struct httpctx_t {
 };
 
 /** 创建httpctx内存池分配对象
- * @param headers_count     http_headers_t头部链表对象预分配数量
+ * @param headers_count     http_header_node_t头部链表对象预分配数量
  * @param ctx_count         httpctx_t上下文对象预分配数量
  * @return                  新建的内存池对象
 */
 inline static httpctx_pool_t* httpctx_pool_malloc(uint32_t headers_count, uint32_t ctx_count) {
     httpctx_pool_t* pool = malloc(sizeof(httpctx_pool_t));
-    pool->headers_pool = mempool_malloc(headers_count, sizeof(http_headers_t));
-    pool->ctx_pool = mempool_malloc(ctx_count, sizeof(httpctx_t));
+    pool->headers_pool = pool_malloc(headers_count, sizeof(http_header_node_t));
+    pool->ctx_pool = pool_malloc(ctx_count, sizeof(httpctx_t));
     return pool;
 }
 
@@ -127,8 +127,8 @@ inline static httpctx_pool_t* httpctx_pool_malloc(uint32_t headers_count, uint32
  * @param self              内存池对象
 */
 inline static void httpctx_pool_free(httpctx_pool_t *self) {
-    mempool_free(self->ctx_pool);
-    mempool_free(self->headers_pool);
+    pool_free(self->ctx_pool);
+    pool_free(self->headers_pool);
     free(self);
 }
 
@@ -141,10 +141,10 @@ extern void httpctx_init(httpctx_t* self);
  * @param pool              httpctx内存池对象
  * @param cb                http服务回调处理函数
 */
-inline static httpctx_t* httpctx_malloc(httpctx_pool_t* pool, on_httpctx_serve_cb cb) {
-    httpctx_t* pctx = (httpctx_t*) mempool_get(pool->ctx_pool);
+inline static httpctx_t* httpctx_pool_get(httpctx_pool_t* self, on_httpctx_serve_cb cb) {
+    httpctx_t* pctx = (httpctx_t*) pool_get(self->ctx_pool);
     memset(pctx, 0, sizeof(httpctx_t));
-    pctx->pool = pool;
+    pctx->pool = self;
     pctx->serve_cb = cb;
     httpctx_init(pctx);
     return pctx;
@@ -160,7 +160,7 @@ extern void httpctx_free_data(httpctx_t* self);
 */
 inline static void httpctx_free(httpctx_t* self) {
     httpctx_free_data(self);
-    mempool_put(self->pool->ctx_pool, self);
+    pool_put(self->pool->ctx_pool, self);
 }
 
 /** 重置httpctx上下文对象状态(释放内部对象占有的内存空间，其他对象初始化，适用于本次请求处理完毕后复用该对象进行下次请求处理)
@@ -172,21 +172,13 @@ inline static void httpctx_reset(httpctx_t* self) {
     httpctx_init(self);
 }
 
-/** 从内存池中获取一个新的http_headers_t对象
+/** 将http_header_node_t对象放回内存池
  * @param self              httpctx上下文对象
- * @return                  新的http_headers_t对象
+ * @param headers           要放回内存池的http_header_node_t对象
 */
-inline static http_headers_t* httpctx_headers_malloc(httpctx_t* self) {
-    return mempool_get(self->pool->headers_pool);
-}
-
-/** 将http_headers_t对象放回内存池
- * @param self              httpctx上下文对象
- * @param headers           要放回内存池的http_headers_t对象
-*/
-inline static void httpctx_headers_free(httpctx_t* self, http_headers_t* headers) {
+inline static void httpctx_headers_free(httpctx_t* self, http_header_node_t* headers) {
     list_del((list_head_t*) headers);
-    mempool_put(self->pool->headers_pool, headers);
+    pool_put(self->pool->headers_pool, headers);
 }
 
 /** 解析http协议内容(当收到新的数据时调用，分段接收时可多次调用)
@@ -200,9 +192,9 @@ extern size_t httpctx_parser_execute(httpctx_t* self, char* buf, size_t len);
  * @param self              httpctx上下文对象
  * @param value             Comtent-Type值，字符串形式
 */
-inline static void httpctx_set_content_type(httpctx_t* self, const string_t* value) {
-    self->res.content_type.pos = mem_array_length(&self->res.data);
-    self->res.content_type.len = mem_array_append(&self->res.data, value->data, value->len);
+inline static void httpctx_set_content_type(httpctx_t* self, const str_t value) {
+    self->res.content_type.pos = dynmem_len(&self->res.data);
+    self->res.content_type.len = dynmem_append(&self->res.data, value, str_len(value));
 }
 
 /** 增加回复消息的头部字段
@@ -210,44 +202,43 @@ inline static void httpctx_set_content_type(httpctx_t* self, const string_t* val
  * @param field             头部字段名，字符串
  * @param value             头部字段值，字符串
 */
-inline static void httpctx_add_header(httpctx_t* self, const string_t* field, const string_t* value) {
-    mem_array_t* pbuf = &self->res.data;
-    http_headers_t* h = httpctx_headers_malloc(self); // 从链表缓冲池中取一个元素
-    h->data.field.pos = mem_array_length(pbuf);
-    h->data.field.len = mem_array_append(pbuf, field->data, field->len);
-    h->data.value.pos = mem_array_length(pbuf);
-    h->data.value.len = mem_array_append(pbuf, value->data, value->len);
+inline static void httpctx_add_header(httpctx_t* self, const str_t field, const str_t value) {
+    dynmem_t* pbuf = &self->res.data;
+    http_header_node_t* h = pool_get(self->pool->headers_pool); // 从链表缓冲池中取一个元素
+    h->data.field.pos = dynmem_len(pbuf);
+    h->data.field.len = dynmem_append(pbuf, field, str_len(field));
+    h->data.value.pos = dynmem_len(pbuf);
+    h->data.value.len = dynmem_append(pbuf, value, str_len(value));
     // 添加到头部链表末尾
-    list_add_tail((list_head_t*) h, (list_head_t*) &self->res.headers);
+    list_add_tail((list_head_t*) h, &self->res.headers);
 }
 
 /** 设置回复内容, 一次性设置body，调用该函数前必须完成http header的设置，调用后body也设置完成
  * @param self              请求上下文对象
 */
 inline static void httpctx_set_body(httpctx_t* self, const void* src, uint32_t len) {
-    self->res.body.pos = mem_array_length(&self->res.data);
-    self->res.body.len = mem_array_append(&self->res.data, src, len);
+    self->res.body.pos = dynmem_len(&self->res.data);
+    self->res.body.len = dynmem_append(&self->res.data, src, len);
 }
 
 /** 开始回复内容的写入，调用该函数后，不允许再写入http header信息, 否则会出现不可预期的错误
  * @param self              请求上下文对象
 */
 inline static void httpctx_body_begin(httpctx_t* self) {
-    self->res.body.pos = mem_array_length(&self->res.data);
+    self->res.body.pos = dynmem_len(&self->res.data);
 }
 
 /** 回复内容的写入(可多次调用)，调用该函数前，必须使用httpctx_body_begin进行初始化
  * @param self              请求上下文对象
 */
 inline static void httpctx_body_append(httpctx_t* self, const void* src, uint32_t len) {
-    self->res.body.len += mem_array_append(&self->res.data, src, len);
+    self->res.body.len += dynmem_append(&self->res.data, src, len);
 }
 
 /** 结束回复内容的写入，该函数为保留函数，暂时不实现任何功能
  * @param self              请求上下文对象
 */
-inline static void httpctx_body_end(httpctx_t* self) {
-}
+inline static void httpctx_body_end(httpctx_t* self) { }
 
 /** 获取请求的method字符串
  * @param self              请求上下文对象
@@ -255,13 +246,25 @@ inline static void httpctx_body_end(httpctx_t* self) {
 */
 extern const char* httpctx_get_method(httpctx_t* self);
 
+/** 获取请求的method字符串
+ * @param self              请求上下文对象
+ * @return                  找到的头部对象
+*/
+extern const http_value_t* httpctx_get_header(httpctx_t* self, const str_t name);
+
+/** 路径匹配, 路径匹配返回true
+ * @param self              请求上下文对象
+ * @param path              要比较的路径
+ * @return                  true：匹配成功，false：匹配失败
+*/
+extern bool httpctx_path_equal(httpctx_t* self, const str_t path);
+
 /** 路径匹配, 前缀路径匹配上就返回true, 例如: path = "/x", 不匹配 "/x1", 匹配 "/x", "/x/", "/x?t=", "/x/?t=", "/x/y/z", "/x/y?t="
  * @param self              请求上下文对象
  * @param path              要比较的路径
  * @return                  true：匹配成功，false：匹配失败
 */
-extern bool httpctx_path_match(httpctx_t* self, const string_t* path);
-
+extern bool httpctx_path_prefix(httpctx_t* self, const str_t path);
 
 #ifdef __cplusplus
 }

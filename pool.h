@@ -24,9 +24,6 @@ extern pool_t pool_malloc(uint32_t capacity, uint32_t alloc_size);
 /** 释放内存池 */
 extern void pool_free(pool_t self);
 
-/** 从内存池获取可用对象, 内存池使用满了之后，返回NULL */
-extern void* pool_tryget(pool_t self);
-
 /** 从内存池获取可用对象, 内存池使用满了后，使用malloc进行分配 */
 extern void* pool_get(pool_t self);
 

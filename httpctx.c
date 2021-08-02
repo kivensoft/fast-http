@@ -12,31 +12,32 @@
 typedef enum { P_BEGIN, P_URL, P_HEAD_FIELD, P_HEAD_VALUE, P_BODY } hc_parser_state_t;
 
 void httpctx_init(httpctx_t* pctx) {
-    mem_array_init(&pctx->req.data, HTTPCTX_PAGE_SIZE);
+    dynmem_init(&pctx->req.data, HTTPCTX_PAGE_SIZE);
     list_head_init(&pctx->req.headers);
-    mem_array_init(&pctx->res.data, HTTPCTX_PAGE_SIZE);
+    dynmem_init(&pctx->res.data, HTTPCTX_PAGE_SIZE);
     list_head_init(&pctx->res.headers);
     http_parser_init(&pctx->req.parser, HTTP_REQUEST);
     pctx->res.status = HTTP_STATUS_OK;
 }
 
 // 释放http_header_t链表，并重置链表为空
-inline static void _reset_headers(mempool_t *pool, list_head_t *head) {
+inline static void reset_headers(pool_t pool, list_head_t *head) {
     list_head_t* pos, *tmp;
-    list_for_reverse_each_safe(pos, tmp, head)
-        mempool_put(pool, pos);
+    list_foreach_reverse_safe(pos, tmp, head) {
+        pool_put(pool, pos);
+    }
     list_head_init(head);
 }
 
 void httpctx_free_data(httpctx_t* pctx) {
-    mem_array_destroy(&pctx->res.data);
-    mem_array_destroy(&pctx->req.data);
-    _reset_headers(pctx->pool->headers_pool, &pctx->res.headers);
-    _reset_headers(pctx->pool->headers_pool, &pctx->req.headers);
+    dynmem_clear(&pctx->res.data);
+    dynmem_clear(&pctx->req.data);
+    reset_headers(pctx->pool->headers_pool, &pctx->res.headers);
+    reset_headers(pctx->pool->headers_pool, &pctx->req.headers);
 }
 
 // 解析http协议版本
-inline static hc_http_version_t _parse_http_ver(uint16_t http_major, uint16_t http_minor) {
+inline static hc_http_version_t parse_http_ver(uint16_t http_major, uint16_t http_minor) {
     switch (http_major) {
         case 0: return HC_HTTP10;
         case 1: return http_minor ? HC_HTTP11 : HC_HTTP10;
@@ -46,7 +47,7 @@ inline static hc_http_version_t _parse_http_ver(uint16_t http_major, uint16_t ht
 }
 
 // 解析http method请求类型
-inline static hc_http_method_t _parse_http_method(unsigned int http_method) {
+inline static hc_http_method_t parse_http_method(unsigned int http_method) {
     switch (http_method) {
         case HTTP_GET:      return HC_HTTP_GET;
         case HTTP_POST:     return HC_HTTP_POST;
@@ -79,13 +80,13 @@ static uint8_t _CHAR_IGNORE_CASE_MAP[] = {
  * @param pctx              httpctx上下文对象
  * @return                  参数起始位置，即url中问号(?)后的位置，未找到返回-1
 */
-inline static int32_t _get_param(mem_array_t *pbuf, http_value_t *url) {
-    int find_pos = mem_array_chr(pbuf, url->pos, url->len, '?');
+inline static int32_t get_param(dynmem_t *pbuf, http_value_t *url) {
+    int find_pos = dynmem_chr(pbuf, url->pos, url->len, '?');
     return find_pos == -1 ? -1 : find_pos + 1;
 }
 
 /** 字符串比较，忽略大小写 */
-inline static bool _stricmpx(const uint8_t *src, const uint8_t *dst, size_t len) {
+inline static bool stricmpx(const uint8_t *src, const uint8_t *dst, size_t len) {
     for (const uint8_t *src_end = src + len; src < src_end; ) {
         if (_CHAR_IGNORE_CASE_MAP[*src++] != _CHAR_IGNORE_CASE_MAP[*dst++])
             return false;
@@ -94,15 +95,15 @@ inline static bool _stricmpx(const uint8_t *src, const uint8_t *dst, size_t len)
 }
 
 // 字符串比较的回调函数参数结构
-typedef struct _equal_param {
+typedef struct equal_param_t {
     const uint8_t   *text;  // 要比较的字符串
     bool            ret;    // 存放比较结果, true: 相同, false: 不同
-} _equal_param;
+} equal_param_t;
 
 /** 缓冲区字符串不区分大小写比较回调函数 */
-static uint32_t _on_equal_ignore_case (void *arg, void *data, uint32_t len) {
-    if (_stricmpx((const uint8_t*)data, ((_equal_param*)arg)->text, len)) {
-        ((_equal_param*)arg)->ret = true;
+static uint32_t on_equal_ignore_case (void *arg, void *data, uint32_t len) {
+    if (stricmpx((const uint8_t*)data, ((equal_param_t*)arg)->text, len)) {
+        ((equal_param_t*)arg)->ret = true;
         return len;
     } else {
         return 0;
@@ -110,75 +111,78 @@ static uint32_t _on_equal_ignore_case (void *arg, void *data, uint32_t len) {
 }
 
 /** buffer_t字符串比较 */
-inline static bool _equal_ignore_case(mem_array_t *pbuf, http_value_t *val, const char *text, size_t tlen) {
-    _equal_param arg = {(const uint8_t*) text, false};
-    mem_array_foreach(pbuf, &arg, val->pos, tlen, _on_equal_ignore_case);
+inline static bool equal_ignore_case(dynmem_t *pbuf, http_value_t *val, const char *text, size_t tlen) {
+    equal_param_t arg = {(const uint8_t*) text, false};
+    dynmem_foreach(pbuf, &arg, val->pos, tlen, on_equal_ignore_case);
     return arg.ret;
 }
 
 /** 获取指定头部字段内容 */
-static http_value_t* _get_http_header(list_head_t *head, mem_array_t *pbuf, const char *field) {
+static http_value_t* get_http_header(list_head_t *head, dynmem_t *pbuf, const char *field) {
     size_t flen = strlen(field);
-    http_headers_t *pos;
-    list_for_each_ex(pos, head) {
+    http_header_node_t *pos;
+    list_foreach(pos, head) {
         http_value_t *f = &pos->data.field;
-        if (f->len == flen && _equal_ignore_case(pbuf, f, field, flen))
+        if (f->len == flen && equal_ignore_case(pbuf, f, field, flen))
             return &pos->data.value;
     }
     return NULL;
 }
 
 /** 转换http头部键对应值成整数 */
-static uint32_t _get_http_header_uint(list_head_t *head, mem_array_t *pbuf, const char *field) {
-    http_value_t* cl = _get_http_header(head, pbuf, field);
+static uint32_t get_http_header_uint(list_head_t *head, dynmem_t *pbuf, const char *field) {
+    http_value_t* cl = get_http_header(head, pbuf, field);
     if (!cl) return 0;
     uint32_t len = cl->len;
     char tmp[len + 1];
-    mem_array_read(pbuf, cl->pos, len, tmp);
+    dynmem_read(pbuf, cl->pos, len, tmp);
     tmp[len] = '\0';
     return atoi(tmp);
 }
 
 // http报文解析--起始回调函数
-static int _on_message_begin(http_parser* parser) {
+static int on_message_begin(http_parser* parser) {
     // log_trace("***HTTP_PARSER MESSAGE BEGIN***");
     return 0;
 }
 
 // http报文解析--头部解析完成回调函数
-static int _on_headers_complete(http_parser* parser) {
+static int on_headers_complete(http_parser* parser) {
     // log_trace("***HTTP_PARSER HEADERS COMPLETE***");
     return 0;
 }
 
 // http报文解析--报文解析完成回调函数
-static int _on_message_complete(http_parser* parser) {
+static int on_message_complete(http_parser* parser) {
     // log_trace("***HTTP_PARSER MESSAGE COMPLETE***");
     httpctx_t* pctx = PARSER_OF_CTX(parser);
     httpreq_t* req = &pctx->req;
     list_head_t* head = &req->headers;
-    mem_array_t* reqbuf = &req->data;
+    dynmem_t* reqbuf = &req->data;
 
     // 设置请求对象的属性
-    req->version = _parse_http_ver(parser->http_major, parser->http_minor);
-    req->method = _parse_http_method(parser->method);
-    req->host = _get_http_header(head, reqbuf, "Host");
-    req->content_type = _get_http_header(head, reqbuf, "Content-Type");
-    req->content_length = _get_http_header_uint(head, reqbuf, "Content-Length");
-    http_value_t* connection = _get_http_header(head, reqbuf, "Connection");
-    req->keep_alive = connection && _equal_ignore_case(reqbuf, connection, "Keep-Alive", sizeof("Keep-Alive"));
+    req->version = parse_http_ver(parser->http_major, parser->http_minor);
+    req->method = parse_http_method(parser->method);
+    req->host = get_http_header(head, reqbuf, "Host");
+    req->content_type = get_http_header(head, reqbuf, "Content-Type");
+    req->content_length = get_http_header_uint(head, reqbuf, "Content-Length");
+    // http_value_t* connection = get_http_header(head, reqbuf, "Connection");
+    req->keep_alive = 1; //connection && equal_ignore_case(reqbuf, connection, "Keep-Alive", sizeof("Keep-Alive"));
 
     req->path.pos = req->url.pos;
-    int32_t param_pos = _get_param(reqbuf, &req->url);
+    int32_t param_pos = get_param(reqbuf, &req->url);
     if (param_pos != -1) {
-        req->path.len = param_pos - 1;
-        req->param.pos = param_pos;
-        req->param.len = req->url.len - param_pos;
+        req->path.len = param_pos - req->url.pos - 1;
+        req->url_param.pos = param_pos;
+        req->url_param.len = req->url.pos + req->url.len - param_pos;
     } else {
         req->path.len = req->url.len;
-        req->param.pos = 0;
-        req->param.len = 0;
+        req->url_param.pos = 0;
+        req->url_param.len = 0;
     }
+    // 如果路径以斜杠结尾，则删除斜杠
+    if (*dynmem_get(reqbuf, req->path.pos + req->path.len - 1) == '/')
+        --req->path.len;
 
     // 设置解析完成标志
     req->parser_state = HTTP_PARSER_COMPLETE;
@@ -186,12 +190,12 @@ static int _on_message_complete(http_parser* parser) {
 }
 
 // http报文解析--请求地址解析回调函数
-static int _on_url(http_parser* parser, const char* at, size_t length) {
+static int on_url(http_parser* parser, const char* at, size_t length) {
     // log_trace("HTTP_PARSER url: %.*s", length, at);
     httpctx_t* pctx = PARSER_OF_CTX(parser);
     if (pctx->req.parser_state != P_URL) {
         pctx->req.parser_state = P_URL;
-        pctx->req.url.pos = mem_array_offset(&pctx->req.data, at);
+        pctx->req.url.pos = dynmem_offset(&pctx->req.data, at);
         pctx->req.url.len = length;
     } else {
         pctx->req.url.len += length;
@@ -201,19 +205,19 @@ static int _on_url(http_parser* parser, const char* at, size_t length) {
 }
 
 // http报文解析--报文头键名解析回调函数
-static int _on_header_field(http_parser* parser, const char* at, size_t length) {
+static int on_header_field(http_parser* parser, const char* at, size_t length) {
     // log_trace("HTTP_PARSER header field: %.*s", length, at);
     httpctx_t* pctx = PARSER_OF_CTX(parser);
-    http_headers_t* head_node;
+    http_header_node_t* head_node;
     // 全新的字段解析
     if (pctx->req.parser_state != P_HEAD_FIELD) {
         pctx->req.parser_state = P_HEAD_FIELD;
 
         // 创建新的headers节点并加入到链表末尾
-        head_node = mempool_get(pctx->pool->headers_pool);
-        head_node->data.field.pos = mem_array_offset(&pctx->req.data, at);
+        head_node = pool_get(pctx->pool->headers_pool);
+        head_node->data.field.pos = dynmem_offset(&pctx->req.data, at);
         head_node->data.field.len = length;
-        list_add_tail(&head_node->node, &pctx->req.headers);
+        list_add_tail((list_head_t*)head_node, &pctx->req.headers);
     } else { // 接上一次解析之后的未完成字段解析
         // 找到最后的headers节点，修改其长度
         head_node = list_last(&pctx->req.headers);
@@ -224,15 +228,15 @@ static int _on_header_field(http_parser* parser, const char* at, size_t length) 
 }
 
 // http报文解析--报文头变量解析回调函数
-static int _on_header_value(http_parser* parser, const char* at, size_t length) {
+static int on_header_value(http_parser* parser, const char* at, size_t length) {
     // log_trace("HTTP_PARSER header data: %.*s", length, at);
     httpctx_t* pctx = PARSER_OF_CTX(parser);
-    http_headers_t* last = list_last(&pctx->req.headers);
+    http_header_node_t* last = list_last(&pctx->req.headers);
 
     // 上次解析了field，对节点的data值进行全新处理
     if (pctx->req.parser_state == P_HEAD_FIELD) {
         pctx->req.parser_state = P_HEAD_VALUE;
-        last->data.value.pos = mem_array_offset(&pctx->req.data, at);
+        last->data.value.pos = dynmem_offset(&pctx->req.data, at);
         last->data.value.len = length;
     // 上次解析了data，对节点的data长度进行增加
     } else if (pctx->req.parser_state == P_HEAD_VALUE) {
@@ -245,12 +249,12 @@ static int _on_header_value(http_parser* parser, const char* at, size_t length) 
 }
 
 // http报文解析--请求体解析回调函数
-static int _on_body(http_parser* parser, const char* at, size_t length) {
+static int on_body(http_parser* parser, const char* at, size_t length) {
     // log_trace("HTTP_PARSER body: %.*s", length, at);
     httpctx_t* pctx = PARSER_OF_CTX(parser);
     if (pctx->req.parser_state != P_BODY) {
         pctx->req.parser_state = P_BODY;
-        pctx->req.body.pos = mem_array_offset(&pctx->req.data, at);
+        pctx->req.body.pos = dynmem_offset(&pctx->req.data, at);
         pctx->req.body.len = length;
     } else {
         pctx->req.body.len += length;
@@ -260,14 +264,14 @@ static int _on_body(http_parser* parser, const char* at, size_t length) {
 
 // http报文解析设置--设置解析过程的回调函数地址
 static http_parser_settings _parser_settings = {
-    .on_message_begin       = _on_message_begin,
-    .on_url                 = _on_url,
+    .on_message_begin       = on_message_begin,
+    .on_url                 = on_url,
     .on_status              = NULL,
-    .on_header_field        = _on_header_field,
-    .on_header_value        = _on_header_value,
-    .on_headers_complete    = _on_headers_complete,
-    .on_body                = _on_body,
-    .on_message_complete    = _on_message_complete,
+    .on_header_field        = on_header_field,
+    .on_header_value        = on_header_value,
+    .on_headers_complete    = on_headers_complete,
+    .on_body                = on_body,
+    .on_message_complete    = on_message_complete,
     .on_chunk_header        = NULL,
     .on_chunk_complete      = NULL,
 };
@@ -282,18 +286,37 @@ const char* httpctx_get_method(httpctx_t *self) {
     return (method >=0 && method < sizeof(HTTP_METHODS)) ? HTTP_METHODS[method] : "UNKNOWN";
 }
 
-bool httpctx_path_match(httpctx_t* self, const string_t* path) {
-    mem_array_t* pbuf = &self->req.data;
+const http_value_t* httpctx_get_header(httpctx_t* self, const str_t name) {
+    return get_http_header(&self->req.headers, &self->req.data, name);
+}
+
+bool httpctx_path_equal(httpctx_t* self, const str_t path) {
+    dynmem_t* pbuf = &self->req.data;
     http_value_t* value = &self->req.path;
-    uint32_t path_len = path->len;
-    bool sflag = path->data[path_len - 1] == '/';
+    // 去除要比较的路径末尾的斜杠
+    uint32_t path_len = str_len(path);
+    bool sflag = path[path_len - 1] == '/';
+    if (sflag) --path_len;
+
+    // 需要匹配的路径比请求路径更长，直接返回匹配不成功
+    if (path_len != value->len)
+        return false;
+
+    return dynmem_equal(pbuf, value->pos, path_len, path);
+}
+
+bool httpctx_path_prefix(httpctx_t* self, const str_t path) {
+    dynmem_t* pbuf = &self->req.data;
+    http_value_t* value = &self->req.path;
+    uint32_t path_len = str_len(path);
+    bool sflag = path[path_len - 1] == '/';
     if (sflag) --path_len;
 
     // 需要匹配的路径比请求路径更长，直接返回匹配不成功
     if (path_len > value->len)
         return false;
 
-    if (!mem_array_equal(pbuf, value->pos, path_len, path))
+    if (!dynmem_equal(pbuf, value->pos, path_len, path))
         return false;
 
     // 请求路径没有路径分隔符，匹配成功
@@ -301,6 +324,6 @@ bool httpctx_path_match(httpctx_t* self, const string_t* path) {
         return true;
 
     // 比较请求路径下一个字符是否路径分隔符或者参数分隔符
-    char ch = *mem_array_get(pbuf, value->pos + path_len);
+    char ch = *dynmem_get(pbuf, value->pos + path_len);
     return ch == '/' || ch == '?';
 }

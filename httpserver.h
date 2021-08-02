@@ -58,9 +58,9 @@ extern bool http_service(uv_loop_t* puv_loop, http_route_t* route, const char* l
 
 extern void http_route_init(http_route_t* route);
 
-extern _Bool http_route_add(const http_route_t* self, const fast_string_t* path, on_http_serve_cb func);
+extern _Bool http_route_add(const http_route_t* self, const str_t path, on_http_serve_cb func);
 
-extern _Bool http_route_del(const http_route_t* self, const fast_string_t* path);
+extern _Bool http_route_del(const http_route_t* self, const str_t path);
 
 #ifdef __cplusplus
 }

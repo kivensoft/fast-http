@@ -1,8 +1,3 @@
-#ifndef NDEBUG
-#   define NDEBUG      // 禁用log_trace调试输出，如需要调试，自行注释掉该句
-#endif
-
-#include "uv.h"
 #include "httpserver.h"
 #include "http_parser.h"
 #include "log.h"
@@ -17,7 +12,7 @@
 #ifndef HS_CTX_POOL_SIZE
 #   define HS_CTX_POOL_SIZE 32
 #endif
-// http_headers_t 头部对象内存池大小
+// http_header_node_t 头部对象内存池大小
 #ifndef HS_HEAD_POOL_SIZE
 #   define HS_HEAD_POOL_SIZE   (HS_CTX_POOL_SIZE * 8)
 #endif
@@ -44,16 +39,14 @@ static const char CONTENT_TYPE[] = "Content-Type: ";
 // 函数预声明--------
 static void on_writed(uv_write_t *req, int status);
 
-#ifndef NDEBUG
 static void log_trace_req(httpctx_t* pctx) {
 	httpreq_t* preq = &pctx->req;
-	mem_array_t* preqbuf = &preq->data;
-	http_value_t* http_val;
+	dynmem_t* preqbuf = &preq->data;
 
-	int buf_len = 32 + preq->url.len;
+	int buf_len = 64 + preq->url.len;
 
-	http_headers_t *pos, *head = &preq->headers;
-	list_for_each_ex(pos, head) {
+	http_header_node_t *pos, *head = &preq->headers;
+	list_foreach(pos, head) {
 		buf_len += pos->data.field.len + pos->data.value.len + 4;
 	}
 	
@@ -63,21 +56,21 @@ static void log_trace_req(httpctx_t* pctx) {
 	memcpy(p, method, m_len);
 	p[m_len] = ' ';
 	p += m_len + 1;
-	p += mem_array_read(preqbuf, preq->url.pos, preq->url.len, p);
+	p += dynmem_read(preqbuf, preq->url.pos, preq->url.len, p);
 	*p++ = '\n';
 
-	list_for_each_ex(pos, head) {
-		http_val = &pos->data.field;
-		p += mem_array_read(preqbuf, http_val->pos, http_val->len, p);
+	list_foreach(pos, head) {
+		http_value_t* http_val = &pos->data.field;
+		p += dynmem_read(preqbuf, http_val->pos, http_val->len, p);
 		*p++ = ':';
 		*p++ = ' ';
 		http_val = &pos->data.value;
-		p += mem_array_read(preqbuf, http_val->pos, http_val->len, p);
+		p += dynmem_read(preqbuf, http_val->pos, http_val->len, p);
 		*p++ = '\n';
 	}
 	*p = '\0';
 
-	log_trace("-------- http header info --------\n%s----------------------------------------------------------------", buf);
+	log_trace("-------- http header info --------\n%s-------------------------------------", buf);
 }
 
 static void log_write_status(uv_write_t *req, int status) {
@@ -88,17 +81,12 @@ static void log_write_status(uv_write_t *req, int status) {
 	log_trace("http write success, size = %d, status = %d", count, status);
 }
 
-#else
-#   define log_trace_req(x) ((void)0)
-#   define log_write_status(x, y) ((void)0)
-#endif
-
 /** httpctx_pool退出释放内存函数 */
 static void on_httpctx_pool_destroy() {
 	log_trace("on_httpctx_pool_destroy, free httpctx_pool");
 	_pool_list_node_t *pos;
 	// 反向遍历，最后分配的最先释放，有利于内存合并
-	list_for_reverse_each_ex(pos, &httpctx_pool_list) {
+	list_foreach_reverse(pos, &httpctx_pool_list) {
 		httpctx_pool_free(pos->data);
 		free(pos);
 	}
@@ -108,12 +96,12 @@ static void on_httpctx_pool_destroy() {
  * @param pbuf          缓冲区对象
  * @param src           要复制的源，内容来自源指向的内容
 */
-static void mem_array_copyfrom(mem_array_t* pbuf, http_value_t* src) {
+static void mem_array_copyfrom(dynmem_t* pbuf, http_value_t* src) {
 	uint32_t slen = src->len;
 	if (!slen) return;
 	char tmp[slen];
-	mem_array_read(pbuf, src->pos, slen, tmp);
-	mem_array_append(pbuf, tmp, slen);
+	dynmem_read(pbuf, src->pos, slen, tmp);
+	dynmem_append(pbuf, tmp, slen);
 }
 
 /** 填充uv_buf_t数组
@@ -122,11 +110,11 @@ static void mem_array_copyfrom(mem_array_t* pbuf, http_value_t* src) {
  * @param start         缓冲区对象起始位置
  * @param size          缓冲区对象大小
 */
-static uint32_t fill_uv_buf_ts(uv_buf_t* bufs, mem_array_t* pbuf, uint32_t offset, uint32_t len) {
+static uint32_t fill_uv_buf_ts(uv_buf_t* bufs, dynmem_t* pbuf, uint32_t offset, uint32_t len) {
 	uv_buf_t* p = bufs;
 	for (uint32_t omax = offset + len; offset < omax; ++p) {
-		p->base = (char*) mem_array_get(pbuf, offset);
-		uint32_t max_len = mem_array_surplus(pbuf, offset);
+		p->base = (char*) dynmem_get(pbuf, offset);
+		uint32_t max_len = dynmem_surplus(pbuf, offset);
 		p->len = len > max_len ? max_len : len;
 		offset += p->len;
 	}
@@ -158,52 +146,52 @@ static char* get_message_by_status(uint16_t status) {
 */
 static uint32_t write_http_header(httpctx_t* pctx) {
 	httpres_t* res = &pctx->res;
-	mem_array_t* pbuf = &res->data;
-	uint32_t write_start = mem_array_length(pbuf);
+	dynmem_t* pbuf = &res->data;
+	uint32_t write_start = dynmem_len(pbuf);
 
 	uint32_t body_len = res->body_type ? res->content_length : res->body.len;
 
 	// 生成http回复状态消息和消息长度
 	char* status_message = get_message_by_status(res->status);
-	int prlen = snprintf((char*) mem_array_next(pbuf), mem_array_next_surplus(pbuf), RESP_STATUS, res->status, status_message, body_len);
-	mem_array_inc_len(pbuf, prlen);
+	int prlen = snprintf((char*) dynmem_next_pos(pbuf), dynmem_next_surplus(pbuf), RESP_STATUS, res->status, status_message, body_len);
+	dynmem_grow(pbuf, prlen);
 
 	// 如果需要保持连接，写入保持连接的头部
 	if (res->keep_alive)
-		mem_array_append(pbuf, KEEP_ALIVE, sizeof(KEEP_ALIVE) - 1);
+		dynmem_append(pbuf, KEEP_ALIVE, sizeof(KEEP_ALIVE) - 1);
 	// 如果content_type类型有设置，设置content_type
 	if (res->content_type.len) {
-		mem_array_append(pbuf, CONTENT_TYPE, sizeof(CONTENT_TYPE) - 1);
+		dynmem_append(pbuf, CONTENT_TYPE, sizeof(CONTENT_TYPE) - 1);
 		mem_array_copyfrom(pbuf, &res->content_type);
-		mem_array_append(pbuf, "\r\n", 2);
+		dynmem_append(pbuf, "\r\n", 2);
 	}
 
 	// 处理其他头部字段
-	http_headers_t* hpos;
-	list_for_each_ex(hpos, &res->headers) {
+	http_header_node_t* hpos;
+	list_foreach(hpos, &res->headers) {
 		http_header_t* p = &hpos->data;
 		mem_array_copyfrom(pbuf, &p->field);
-		mem_array_append(pbuf, ": ", 2);
+		dynmem_append(pbuf, ": ", 2);
 		mem_array_copyfrom(pbuf, &p->value);
-		mem_array_append(pbuf, "\r\n", 2);
+		dynmem_append(pbuf, "\r\n", 2);
 	}
 
-	mem_array_append(pbuf, "\r\n", 2);
+	dynmem_append(pbuf, "\r\n", 2);
 
-	return mem_array_length(pbuf) - write_start;
+	return dynmem_len(pbuf) - write_start;
 }
 
 // 向客户端写入回复内容
 static void write_http_resp(httpctx_t* pctx) {
 	httpres_t* res = &pctx->res;
-	mem_array_t* pres_data = &res->data;
-	uint32_t write_start = mem_array_align_len(pres_data);
+	dynmem_t* pres_data = &res->data;
+	uint32_t write_start = dynmem_align(pres_data);
 
 	// 写入回复头部信息
 	uint32_t head_size = write_http_header(pctx);
 	// 计算uv_buf_t数组长度: header长度 + body长度
 	uint32_t body_size = res->body.len;
-	uint32_t ps = pres_data->pagesize;
+	uint32_t ps = pres_data->page;
 	uint32_t bufs_size = (head_size + ps - 1) / ps + (body_size + ps - 1) / ps;
 
 	// 生成uv_buf_t数组, 作为uv_write写入函数的数据区
@@ -254,7 +242,7 @@ static void on_writed(uv_write_t *req, int status) {
 static void on_allocing(uv_handle_t* client, size_t suggested_size, uv_buf_t* buf) {
 	log_trace("http on alloc, suggested_size = %u", (uint32_t) suggested_size);
 	uint32_t out_len = 0;
-	mem_array_last_page(&((httpctx_t*)client)->req.data, (uint8_t**)&buf->base, &out_len);
+	dynmem_lastpage(&((httpctx_t*)client)->req.data, (uint8_t**)&buf->base, &out_len);
 	buf->len = out_len;
 }
 
@@ -273,7 +261,7 @@ static void on_readed(uv_stream_t* uv_stream, ssize_t nread, const uv_buf_t* buf
 	// 对收到的数据进行解析
 	httpctx_parser_execute(client, buf->base, buf->len);
 	// 设置读取缓冲区的当前长度
-	mem_array_inc_len(&client->req.data, buf->len);
+	dynmem_grow(&client->req.data, buf->len);
 
 	// 读取的请求数据尚未结束
 	if (client->req.parser_state != HTTP_PARSER_COMPLETE) {
@@ -282,7 +270,7 @@ static void on_readed(uv_stream_t* uv_stream, ssize_t nread, const uv_buf_t* buf
 	}
 
 	// 输出调试信息
-	log_trace_req(client);
+	if (log_is_trace_enabled()) log_trace_req(client);
 
 	// 调用回调函数进行处理
 	client->serve_cb(client);
@@ -291,7 +279,7 @@ static void on_readed(uv_stream_t* uv_stream, ssize_t nread, const uv_buf_t* buf
 
 	// 写入是异步操作，这里为了充分利用内存，先行将请求对象占用的内存进行释放
 	// 回复对象占用的内存及其它小内存占用，等到写入完成再释放
-	mem_array_destroy(&client->req.data);
+	dynmem_clear(&client->req.data);
 }
 
 /** http服务每次有新连接时的回调函数 */
@@ -302,7 +290,7 @@ static void on_new_connection(uv_stream_t* server, int status) {
 		return;
 	}
 
-	httpctx_t* client = httpctx_malloc(((http_server_t*) server)->pool, ((http_server_t*) server)->serve_cb);
+	httpctx_t* client = httpctx_pool_get(((http_server_t*) server)->pool, ((http_server_t*) server)->serve_cb);
 	// uv_tcp_t *client = (uv_tcp_t*) malloc(sizeof(uv_tcp_t));
 	uv_tcp_init(uv_default_loop(), (uv_tcp_t*) client);
 	if (uv_accept(server, (uv_stream_t*) client) == 0) {
@@ -412,10 +400,10 @@ inline static http_route_node_t* _get_route(rb_root_t* root, const char* str, ui
 	return node;
 }
 
-_Bool http_route_add(const http_route_t* self, const fast_string_t* path, on_http_serve_cb func) {
-	uint32_t len = path->len;
+_Bool http_route_add(const http_route_t* self, const str_t path, on_http_serve_cb func) {
+	uint32_t len = strlen(path);
 	char tmp_path[len + 2];
-	_path_copy(tmp_path, path->data, len);
+	_path_copy(tmp_path, path, len);
 
 	char *start = tmp_path, *pos = tmp_path;
 	rb_root_t* root = &self->tree;
@@ -434,10 +422,10 @@ _Bool http_route_add(const http_route_t* self, const fast_string_t* path, on_htt
 	return 1;
 }
 
-_Bool http_route_del(const http_route_t* self, const fast_string_t* path) {
-	uint32_t len = path->len;
+_Bool http_route_del(const http_route_t* self, const str_t path) {
+	uint32_t len = strlen(path);
 	char tmp_path[len + 2];
-	_path_copy(tmp_path, path->data, len);
+	_path_copy(tmp_path, path, len);
 
 	char *start = tmp_path, *pos = tmp_path;
 	rb_root_t* root = &self->tree;
@@ -457,23 +445,23 @@ _Bool http_route_del(const http_route_t* self, const fast_string_t* path) {
 
 	node->func = NULL;
 	// TODO: 删除要考虑上级无效节点的级联删除
-	while (!node->func) {
-		rb_erase(node, )
-	}
+	// while (!node->func) {
+	// 	rb_erase(node, )
+	// }
 	return 1;
 }
 
 void http_route_match(const http_route_t* self, const char* path) {
-	for (rb_node_t *node = root->rb_node; node;) {
-		int cmp_ret = keycmp((const void*)key + sizeof(rb_node_t), (const void*)node + sizeof(rb_node_t));
+	// for (rb_node_t *node = root->rb_node; node;) {
+	// 	int cmp_ret = keycmp((const void*)key + sizeof(rb_node_t), (const void*)node + sizeof(rb_node_t));
 
-		if (cmp_ret < 0)
-			node = node->rb_left;
+	// 	if (cmp_ret < 0)
+	// 		node = node->rb_left;
 
-		else if (cmp_ret > 0)
-			node = node->rb_right;
-		else
-			return node;
-	}
+	// 	else if (cmp_ret > 0)
+	// 		node = node->rb_right;
+	// 	else
+	// 		return node;
+	// }
 	return NULL;
 }
