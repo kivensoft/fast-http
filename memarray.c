@@ -1,52 +1,53 @@
 #include "memarray.h"
 #include <string.h>
 
+static void* (*_MALLOC_FN) (size_t size) = malloc;
+static void (*_FREE_FN) (void *ptr) = free;
+
 // 字符查找回调函数的用户自定义参数结构
-typedef struct {
+typedef struct chr_arg_t {
     char        ch;     // 需要查找的字符
     uint32_t    pos;    // 返回值，查找到的位置，找不到返回结束位置的下一个位置
 } chr_arg_t;
 
-/** 双向指针链表初始化
- * @param list      指针列表头部节点
-*/
-static void _list_init(struct _mem_list_t *list) {
-    list->prev = list;
-    list->next = list;
-    list->data = NULL;
+// 双向指针链表初始化
+inline static void _list_init(_mem_array_head_t *head) {
+    head->prev = (_mem_array_node_t*) head;
+    head->next = (_mem_array_node_t*) head;
 }
 
 /** 往双向链表尾部插入一个节点
- * @param list      指针列表头部节点
+ * @param head      指针列表头部节点
  * @param node      要插入的节点
 */
-static void _list_add(struct _mem_list_t *list, struct _mem_list_t *node) {
-    struct _mem_list_t *prev = list->prev;
+inline static void _list_add(_mem_array_head_t *head, _mem_array_node_t *node) {
+    _mem_array_node_t *prev = head->prev;
     node->prev = prev;
-    node->next = list;
+    node->next = (_mem_array_node_t*) head;
     prev->next = node;
-    list->prev = node;
+    head->prev = node;
 }
 
 /** 双向链表删除一个节点
- * @param node      要插入的节点
+ * @param node      要删除的节点
 */
-static void _list_del(struct _mem_list_t *node) {
-    struct _mem_list_t *prev = node->prev, *next = node->next;
+inline static void _list_del(_mem_array_node_t *node) {
+    _mem_array_node_t *prev = node->prev, *next = node->next;
     prev->next = next;
     next->prev = prev;
 }
 
 /** 往双向链表尾部插入一个节点(调用malloc分配节点内存，并返回节点)
- * @param list      指针列表头部节点
+ * @param head      指针列表头部节点
 */
-static struct _mem_list_t* _list_new(struct _mem_list_t* list) {
-    struct _mem_list_t *ret = malloc(sizeof(struct _mem_list_t));
-    _list_add(list, ret);
+inline static struct _mem_array_node_t* _list_new(_mem_array_head_t *head) {
+    _mem_array_node_t *ret = _MALLOC_FN(sizeof(_mem_array_node_t));
+    _list_add(head, ret);
     return ret;
 }
 
-static uint32_t _fix_len(uint32_t cap, uint32_t off, uint32_t len) {
+// 计算相对于偏移和长度的真实有效长度
+inline static uint32_t _check_len(uint32_t cap, uint32_t off, uint32_t len) {
     if (off > cap) return 0;
     if (off + len > cap)
         len = cap - off;
@@ -54,21 +55,21 @@ static uint32_t _fix_len(uint32_t cap, uint32_t off, uint32_t len) {
 }
 
 /** mem_array_write默认实现的函数 */
-static uint32_t _on_write(void* arg, void* data, uint32_t len) {
+static uint32_t _on_write(void* arg, void *data, uint32_t len) {
     memcpy(data, *(char**)arg, len);
     *(char**)arg += len; // 源地址指针前移
     return len;
 }
 
 /** mem_array_read模式实现的回调函数 */
-static uint32_t _on_read(void* arg, void* data, uint32_t len) {
+static uint32_t _on_read(void* arg, void *data, uint32_t len) {
     memcpy(*(char**)arg, data, len);
     *(char**)arg += len;
     return len;
 }
 
 /** mem_array_chr模式实现的回调函数 */
-static uint32_t _on_find_char(void* arg, void* data, uint32_t len) {
+static uint32_t _on_find_char(void* arg, void *data, uint32_t len) {
     char* p = (char*)memchr(data, ((chr_arg_t*)arg)->ch, len);
     if (!p) {
         ((chr_arg_t*)arg)->pos += len;
@@ -80,7 +81,7 @@ static uint32_t _on_find_char(void* arg, void* data, uint32_t len) {
 }
 
 /** mem_array_equal模式实现的回调函数 */
-static uint32_t _on_equal(void* arg, void* data, uint32_t len) {
+static uint32_t _on_equal(void *arg, void *data, uint32_t len) {
     if (memcmp(data, *(char**)arg, len)) {
         *(char**)arg = NULL;
         return 0;
@@ -94,9 +95,10 @@ static uint32_t _on_equal(void* arg, void* data, uint32_t len) {
  * @param self      缓冲区指针
  * @return          新分配的内存页地址
 */
-static uint8_t* mem_array_expand(mem_array_t* self) {
-    uint8_t *buf = malloc(self->pagesize);
-    _list_new(&self->list)->data = buf;
+static uint8_t* mem_array_expand(mem_array_t *self) {
+    uint8_t *buf = _MALLOC_FN(self->pagesize);
+    _mem_array_node_t *node = _list_new(&self->list_head);
+    node->data = buf;
     self->cap += self->pagesize;
     return buf;
 }
@@ -106,8 +108,8 @@ static uint8_t* mem_array_expand(mem_array_t* self) {
  * @param pos       位置信息
  * @return          所在页的节点地址
 */
-static struct _mem_list_t* _get_page(mem_array_t* self, uint32_t pos) {
-    struct _mem_list_t *node = self->list.next;
+static _mem_array_node_t* _get_page(mem_array_t *self, uint32_t pos) {
+    _mem_array_node_t *node = self->list_head.next;
     uint32_t ps = self->pagesize;
     while (pos >= ps) {
         pos -= ps;
@@ -116,132 +118,144 @@ static struct _mem_list_t* _get_page(mem_array_t* self, uint32_t pos) {
     return node;
 }
 
-void mem_array_init(mem_array_t* self, uint32_t pagesize) {
+void mem_array_init_hooks(void* (*malloc_fn) (size_t size), void (*free_fn) (void *ptr)) {
+    _MALLOC_FN = malloc_fn;
+    _FREE_FN = free_fn;
+}
+
+void mem_array_init(mem_array_t *self, uint32_t pagesize) {
     if (!self) return;
 
     self->ref = 1;
     self->len = 0;
     self->cap = 0;
-    
-    uint32_t ps_align = 1, bits = 0;
-    while (ps_align < pagesize) {
-        ps_align <<= 1;
-        ++bits;
-    }
-    self->pagesize = ps_align;
 
-    _list_init(&self->list);
+    uint32_t ps = 1;
+    while (ps < pagesize) ps <<= 1;
+    self->pagesize = ps;
+
+    _list_init(&self->list_head);
 }
 
-void mem_array_destroy(mem_array_t* self) {
+void mem_array_destroy(mem_array_t *self) {
     if (self && self->ref && !--self->ref) {
         // 释放链表指向的内存页和链表自身节点的内存
-        struct _mem_list_t *pos, *tmp, *list = &self->list;
-        for (pos = list->next, tmp = pos->next; pos != list; pos = tmp, tmp = pos->next) {
-            free(pos->data);
-            free(pos);
+        _mem_array_head_t *head = &self->list_head;
+        _mem_array_node_t *pos;
+        // 分配是从开头分配，释放的时候从结尾开始释放，方便内存管理器合并内存，减少内存碎片
+        for (pos = head->prev; pos != (_mem_array_node_t*) head; pos = pos->prev) {
+            // 每页内存分配是先分配内存，再分配链表节点内存，所以释放是反着来
+            _FREE_FN(pos->data);
+            _FREE_FN(pos);
         }
 
         self->len = 0;
         self->cap = 0;
-        _list_init(list);
+        _list_init(head);
     }
 }
 
-mem_array_t* mem_array_clone(mem_array_t* self) {
+mem_array_t *mem_array_malloc(uint32_t pagesize) {
+    mem_array_t *ret = _MALLOC_FN(sizeof(mem_array_t));
+    mem_array_init(ret, pagesize);
+    return ret;
+}
+
+mem_array_t* mem_array_clone(mem_array_t *self) {
     uint32_t len = self->len, pagesize = self->pagesize;
 
-    mem_array_t* ret = malloc(sizeof(mem_array_t));
+    mem_array_t *ret = _MALLOC_FN(sizeof(mem_array_t));
     ret->ref = 1;
     ret->pagesize = pagesize;
 
-    struct _mem_list_t *ret_list = &ret->list;
-    _list_init(ret_list);
+    _mem_array_head_t *ret_head = &ret->list_head;
+    _list_init(ret_head);
 
-    struct _mem_list_t *pos, *list = &self->list;
-    for (pos = list->next; len; pos = pos->next) {
-        uint32_t c = len > pagesize ? pagesize : len;
+    _mem_array_head_t *head = &self->list_head;
+    _mem_array_node_t *pos;
+    for (pos = head->next; len && pos != (_mem_array_node_t*) head; pos = pos->next) {
+        uint32_t count = len > pagesize ? pagesize : len;
         uint8_t *buf = mem_array_expand(ret);
-        memcpy(buf, pos->data, c);
-        ret->len += c;
-        len -= c;
+        memcpy(buf, pos->data, count);
+        ret->len += count;
+        len -= count;
     }
 
     return ret;
 }
 
-void mem_array_set_length(mem_array_t* self, uint32_t newlen) {
+void mem_array_set_length(mem_array_t *self, uint32_t newlen) {
     // 新的长度大于已有容量，则进行扩充
     while (newlen > self->cap)
         mem_array_expand(self);
     self->len = newlen;
 }
 
-void mem_array_set_capicity(mem_array_t* self, uint32_t new_capicity) {
+void mem_array_set_capicity(mem_array_t *self, uint32_t new_capicity) {
     if (self->cap < new_capicity) {
         while (self->cap < new_capicity)
             mem_array_expand(self);
     } else {
-        struct _mem_list_t *list = &self->list;
-        new_capicity += self->pagesize;
+        uint32_t pagesize = self->pagesize;
+        new_capicity += pagesize;
+        _mem_array_head_t *head = &self->list_head;
         while (self->cap >= new_capicity) {
-            struct _mem_list_t *pos = list->prev;
-            free(pos->data);
+            _mem_array_node_t *pos = head->prev;
+            _FREE_FN(pos->data);
             _list_del(pos);
-            free(pos);
-            self->cap -= self->pagesize;
+            _FREE_FN(pos);
+            self->cap -= pagesize;
         }
     }
 
-    if (self->len > self->cap)
-        self->len = self->cap;
+    if (self->len > self->cap) self->len = self->cap;
 }
 
-uint32_t mem_array_align_len(mem_array_t* self) {
-    uint32_t mask = self->pagesize - 1, len = self->len;
-    uint32_t new_len = (len + mask) & ~mask;
+uint32_t mem_array_align_len(mem_array_t *self) {
+    uint32_t mask = self->pagesize - 1, new_len = (self->len + mask) & ~mask;
     if (new_len >= self->cap)
         mem_array_expand(self);
     self->len = new_len;
     return new_len;
 }
 
-uint8_t* mem_array_get(mem_array_t* self, uint32_t offset) {
+uint8_t* mem_array_get(mem_array_t *self, uint32_t offset) {
     if (offset >= self->cap) return NULL;
     return _get_page(self, offset)->data + (offset & (self->pagesize - 1));
 }
 
-void mem_array_last_page(mem_array_t* self, uint8_t** out_ptr, uint32_t* out_len) {
+void mem_array_last_page(mem_array_t *self, uint8_t **out_ptr, uint32_t *out_len) {
     uint32_t len = self->len;
 
     if (len == self->cap)
         *out_ptr = mem_array_expand(self);
     else if (len + self->pagesize >= self->cap)
-        *out_ptr = self->list.prev->data;
+        *out_ptr = self->list_head.prev->data;
     else
         *out_ptr = mem_array_get(self, len);
 
     *out_len = mem_array_surplus(self, len);
 }
 
-uint32_t mem_array_offset(mem_array_t* self, const void* pointer) {
-    uint32_t ps = self->pagesize;
-    struct _mem_list_t *head = &self->list, *node = head->next;
-    for (uint32_t i = 0; node != head; ++i, node = node->next) {
-        uint8_t* d = node->data;
-        if ((uint8_t*)pointer >= d && (uint8_t*)pointer < d + ps)
-            return (uint8_t*)pointer - d;
+uint32_t mem_array_offset(mem_array_t *self, const void *pointer) {
+    _mem_array_head_t *head = &self->list_head;
+    _mem_array_node_t *node = head->next;
+    uint8_t *p_end = (uint8_t*)pointer - self->pagesize;
+    for (uint32_t i = 0; node != (_mem_array_node_t*) head; ++i, node = node->next) {
+        uint8_t *data = node->data;
+        if ((uint8_t*) pointer >= data && p_end < data)
+            return (uint8_t*)pointer - data;
     }
     return 0xFFFFFFFF;
 }
 
-uint32_t mem_array_foreach(mem_array_t* self, void* arg, uint32_t off, uint32_t len, mem_array_on_foreach callback) {
-    len = _fix_len(self->cap, off, len);
+uint32_t mem_array_foreach(mem_array_t *self, void *arg, uint32_t off, uint32_t len, mem_array_on_foreach callback) {
+    len = _check_len(self->cap, off, len);
     if (!len) return 0;
 
     // 找到off对应的page
     uint32_t ps = self->pagesize;
-    struct _mem_list_t *node = _get_page(self, off);
+    struct _mem_array_node_t *node = _get_page(self, off);
     off &= ps - 1;
 
     // 实际可供循环的长度, 新启变量以便保留原有len作为返回值
@@ -272,7 +286,7 @@ _return:
     return len;
 }
 
-uint32_t mem_array_write(mem_array_t* self, uint32_t off, uint32_t len, const void* src) {
+uint32_t mem_array_write(mem_array_t *self, uint32_t off, uint32_t len, const void *src) {
     uint32_t end = off + len;
     if (end > self->cap) mem_array_set_capicity(self, end);
     mem_array_foreach(self, &src, off, len, _on_write);
@@ -280,7 +294,7 @@ uint32_t mem_array_write(mem_array_t* self, uint32_t off, uint32_t len, const vo
     return len;
 }
 
-uint32_t mem_array_read(mem_array_t* self, uint32_t off, uint32_t len, void* dst) {
+uint32_t mem_array_read(mem_array_t *self, uint32_t off, uint32_t len, void *dst) {
     uint32_t slen = self->len;
     if (off >= slen) return 0;
     if (off + len > slen) len = slen - off;
@@ -288,20 +302,19 @@ uint32_t mem_array_read(mem_array_t* self, uint32_t off, uint32_t len, void* dst
     return len;
 }
 
-int mem_array_chr(mem_array_t* self, uint32_t off, uint32_t len, uint8_t ch) {
-    if (off >= self->len)
-        return -1;
+int mem_array_chr(mem_array_t *self, uint32_t off, uint32_t len, uint8_t ch) {
+    if (off >= self->len) return -1;
     chr_arg_t arg = { .pos = off, .ch = ch };
     mem_array_foreach(self, &arg, off, len, _on_find_char);
     return arg.pos < off + len ? arg.pos : -1;
 }
 
-int mem_array_lastchr(mem_array_t* self, uint32_t off, uint32_t len, uint8_t ch) {
-    len = _fix_len(self->cap, off, len);
+int mem_array_lastchr(mem_array_t *self, uint32_t off, uint32_t len, uint8_t ch) {
+    len = _check_len(self->cap, off, len);
     if (!len) return 0;
 
     uint32_t ps = self->pagesize, end = off + len - 1, loop_len = len;
-    struct _mem_list_t *node = _get_page(self, end);
+    _mem_array_node_t *node = _get_page(self, end);
     end &= ps - 1;
 
     // 处理最后一页，页不对齐的情况
@@ -330,9 +343,8 @@ int mem_array_lastchr(mem_array_t* self, uint32_t off, uint32_t len, uint8_t ch)
     return -1;
 }
 
-bool mem_array_equal(mem_array_t* self, uint32_t off, uint32_t len, const void* data) {
-    if (off >= self->len || off + len > self->len)
-        return 0;
+bool mem_array_equal(mem_array_t *self, uint32_t off, uint32_t len, const void *data) {
+    if (off >= self->len || off + len > self->len) return 0;
     const char* arg = data;
     mem_array_foreach(self, &arg, off, len, _on_equal);
     return arg;

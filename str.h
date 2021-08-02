@@ -1,4 +1,5 @@
 /** 字符串库，创建的字符串对象具备长度属性，可动态扩展
+ * 
  * @author kiven lee
  * @version 1.0
 */
@@ -9,159 +10,125 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <stdlib.h>
-
-// usage: string_cats(x, PP_ARGS(a, b, c, d))
-// expand: string_cats(x, 4, a, b, c, d);
-#ifndef PP_NARG
-#   define PP_ARGS(...) PP_NARG(__VA_ARGS__), __VA_ARGS__
-#   define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
-#   define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
-#   define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,_10,_11,_12,_13,_14,_15,_16,_17,_18,_19,_20,_21,_22,_23,_24,_25,_26,_27,_28,_29,_30,_31,_32,N,...) N
-#   define PP_RSEQ_N() 32,31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
-#endif
+#include "ppnarg.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// 自定义字符串复制功能，返回值是复制的长度
-static inline size_t strcpy_len(char* dst, const char* src) {
-    const char *osrc = src;
-    while ((*dst++ = *src++));
-    return src - osrc - 1;
+/** 定义字符串复制功能，主要用于连续复制多个字符串
+ * 
+ * @param dst 目标字符串
+ * @param src 源字符串
+ * @return 目标字符串写入结束位置，及'\0'结束符所在位置
+*/
+static inline char* strcpy2(char *dst, const char *src) {
+    while ((*dst = *src)) ++dst, ++src;
+    return dst;
 }
 
-typedef struct {
-    char* data;
-    uint32_t len;
-} fast_string_t;
+// str_t，带引用计数和容量、长度的字符串结构
+struct _str_head_t {
+    uint32_t        len;
+    uint32_t        cap;
+    char            data[];
+};
 
-typedef struct {
-    uint32_t ref;
-    uint32_t len;
-    uint32_t cap;
-    char data[];
-} string_t;
+typedef char* str_t;
 
-/** 分配string_t空间，容量为capacity
- * @param capacity      string_t的容量
- * @return              string_t指针
+#define STR_OFFSET_HEAD(x) ((struct _str_head_t*)((x) - sizeof(struct _str_head_t)))
+
+// usage: STR_FREE_MANY(a, b, c, d);
+// expand: string_releases(4, a, b, c, d);
+#define STR_FREES(...) str_frees(PP_ARGS(__VA_ARGS__))
+#define STR_CATS(dst, ...) str_cats(dst, PP_ARGS(__VA_ARGS))
+
+// 计算str_t所需要的内存
+#define STR_SIZE(x) (sizeof(struct _str_header_t) + (x) + 1)
+
+static inline str_len(const str_t self) { return STR_OFFSET_HEAD(self)->len; }
+static inline str_cap(const str_t self) { return STR_OFFSET_HEAD(self)->cap; }
+
+/** str_t引用计数减一，如果引用计数为0，则释放内存 */
+static inline void str_free(str_t self) { free(STR_OFFSET_HEAD(self)); }
+
+/** 分配str_t空间，容量为capacity
+ * 
+ * @param capacity      str_t的容量
 */
-extern string_t* string_malloc(uint32_t capacity);
+extern str_t str_malloc(uint32_t capacity);
 
-/** string_t增加引用
- * @param src           增加引用的string_t
+
+/** str_t引用计数减一，如果引用计数为0，则释放内存
+ * 
+ * @param count         参数个数
+ * @param ...           不定参数
 */
-static inline string_t* string_copy(string_t* src) {
-    ++src->ref;
-    return src;
+extern void str_frees(int count, ...);
+
+/** 分配str_t空间，原始内容为src内容 */
+static inline str_t str_from_cstr(const char *src) {
+    uint32_t len = src ? strlen(src) : 0;
+    str_t p = str_malloc(len);
+    if (src) {
+        memcpy(p, src, len + 1);
+        STR_OFFSET_HEAD(p)->len = len;
+    }
+    return p;
 }
 
-/** string_t引用计数减一，如果引用计数为0，则释放内存
- * @param src           string_t
+/** 缩减字符串长度，只能用于截断，无法用于扩展
+ * 
+ * @param len           缩减长度
 */
-static inline void string_free(string_t* src) {
-    if (src->ref && !--src->ref)
-        free(src);
+static inline void str_trim(str_t self, uint32_t len) {
+    if (len < STR_OFFSET_HEAD(self)->len) {
+        STR_OFFSET_HEAD(self)->len = len;
+        self[len] = '\0';
+    }
 }
 
-/** string_t引用计数减一，如果引用计数为0，则释放内存
- * @param src           string_t
-*/
-extern void string_frees(size_t count, ...);
-
-/** 返回string_t指向的c风格字符串地址
- * @param src           string_t
- * @return              c风格字符串地址
-*/
-static inline char* string_cstr(string_t* src) {
-    return src->data;
-}
-
-/** 返回string_t的长度
- * @param src           string_t
- * @return              字符串长度
-*/
-static inline uint32_t string_len(string_t* src) {
-    return src->len;
-}
-
-/** 返回string_t的容量
- * @param src           string_t
- * @return              字符串容量
-*/
-static inline uint32_t string_cap(string_t* src) {
-    return src->cap;
-}
-
-/** 返回string_t的引用计数
- * @param src           string_t
- * @return              引用计数
-*/
-static inline uint32_t string_ref(string_t* src) {
-    return src->ref;
-}
-
-/** 缩减字符串长度，通常用于截断
- * @param src           string_t
- * @param count         缩减长度
-*/
-static inline void string_trim(string_t *src, uint32_t count) {
-    uint32_t len = src->len;
-    if (len < count) count = len;
-    len -= count;
-    src->len = len;
-    src->data[len] = '\0';
-}
-
-/** 分配string_t空间，原始内容为src内容
- * @param src           源字符串内容
- * @return              string_t指针
-*/
-extern string_t* string_from_cstr(const char *src);
-
-/** 复制一个stirng，全新分配内存空间
- * @param src           string_t
- * @return              新的string_t指针
-*/
-extern string_t* string_clone(string_t* src);
-
-/** string_t增加容量
- * @param src           string_t
+/** str_t增加容量
+ * 
  * @param capacity      新增容量
- * @return              string_t指针
 */
-extern string_t* string_expand(string_t* src, uint32_t capacity);
+extern void str_grow(str_t* self, uint32_t capacity);
+
+/** 复制一个stirng，全新分配内存空间 */
+extern str_t str_copy(str_t src);
 
 /** 连接字符串
- * @param dst           连接到的目标字符串
+ * 
  * @param src           源字符串
- * @return              新的string_t
+ * @param len           src长度
 */
-extern string_t* string_cat(string_t* dst, const char *src);
+extern void str_append(str_t* self, const char *src, uint32_t len);
 
 /** 连接字符串
- * @param dst           连接到的目标字符串
+ * 
+ * @param src           源字符串
+ * @return              新的str_t
+*/
+static inline void str_cat(str_t* self, const char *src) {
+    if (src) str_append(self, src, strlen(src));
+}
+
+/** 连接字符串
+ * 
+ * @param src           源字符串
+ * @return              新的str_t
+*/
+static inline void str_catstr(str_t* self, const str_t src) {
+    if (src) str_append(self, src, STR_OFFSET_HEAD(src)->len);
+}
+
+/** 连接字符串
+ * 
  * @param count         字符串不定参数个数
  * @param ...           不定参数
- * @return              新的string_t
+ * @return              新的str_t
 */
-extern string_t* string_cats(string_t* dst, size_t count, ...);
-
-/** 连接字符串
- * @param dst           连接到的目标字符串
- * @param src           源字符串
- * @return              新的string_t
-*/
-extern string_t* string_join(string_t* dst, const string_t* src);
-
-/** 连接字符串
- * @param dst           连接到的目标字符串
- * @param count         字符串不定参数个数
- * @param ...           不定参数, 必须为string_t*类型
- * @return              新的string_t
-*/
-extern string_t* string_joins(string_t* dst, size_t count, ...);
+extern void string_cats(str_t* self, int count, ...);
 
 #ifdef __cplusplus
 }

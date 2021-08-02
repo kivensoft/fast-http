@@ -19,12 +19,15 @@ inline static uint8_t hex_decode_char_fast(uint8_t b1, uint8_t b2) {
     return b1 << 4 | b2;
 }
 
+// 判断字符是否需要编码
 inline static _Bool required_encode(unsigned char ch, const uint8_t* map) {
     if (ch < 32 || ch > 127) return 1;
-    unsigned idx = ch - 32, a_idx = idx >> 3, a_off = idx & 7;
-    return (map[a_idx] >> a_off) & 1;
+    // 查找ch在map位图数组中对应的标志位，标志为1表示需要编码, 0表示不需要
+    unsigned idx = ch - 32;
+    return (map[idx >> 3] >> idx & 7) & 1;
 }
 
+// 计算编码需要的长度
 inline static size_t encode_length(const char *src, size_t src_len, const uint8_t* map) {
     if (!src || !src_len)
         return 0;
@@ -41,14 +44,17 @@ inline static size_t encode_length(const char *src, size_t src_len, const uint8_
     return count;
 }
 
+// 计算解码需要的长度
 size_t url_encode_length(const char *src, size_t src_len) {
     return encode_length(src, src_len, URL_MAP);
 }
 
+// 计算url参数解码需要的长度
 size_t url_component_encode_length(const char *src, size_t src_len) {
     return encode_length(src, src_len, URL_COMPONENT_MAP);
 }
 
+// url编码
 static size_t encode(const char *src, size_t src_len, char *dst, size_t dst_len, const uint8_t* map) {
     if (!src || !src_len || !dst || !dst_len)
         return 0;

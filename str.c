@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <stdarg.h>
 #include <string.h>
 
 #include "str.h"
@@ -7,226 +6,85 @@
 #define MIN_CAP 32
 #define LARGE_CAP 1024
 
-string_t* string_malloc(uint32_t capacity) {
+str_t str_malloc(uint32_t capacity) {
     // 最小分配32字节，小于1024时倍数增长，大于1024时按1024增长
-    uint32_t cap, min_cap = capacity + sizeof(string_t) + 1;
+    uint32_t cap = MIN_CAP, min_cap = capacity + sizeof(struct _str_head_t) + 1;
 
-    if (min_cap <= LARGE_CAP)
-        for (cap = MIN_CAP; cap < min_cap;) cap <<= 1;
-    else
-        for (cap = LARGE_CAP; cap < min_cap;) cap += LARGE_CAP;
+    while (cap < min_cap)
+        if (min_cap <= LARGE_CAP) cap <<= 1; else cap += LARGE_CAP;
 
-    string_t* p = (string_t*) malloc(cap);
-
-    p->ref = 1;
+    struct _str_head_t *p = malloc(cap);
     p->len = 0;
-    p->cap = cap - sizeof(string_t) - 1;
-    *(p->data) = '\0';
+    p->cap = cap - sizeof(struct _str_head_t) - 1;
+    p->data[0] = '\0';
 
-    return p;
+    return p->data;
 }
 
-void string_frees(size_t count, ...) {
+void str_frees(int count, ...) {
     va_list args;
     va_start(args, count);
-    for (unsigned i = 0, imax = count; i < imax; ++i)
-        string_free(va_arg(args, string_t*));
+    while (count--)
+        str_free(va_arg(args, str_t));
     va_end(args);
 }
 
-string_t* string_from_cstr(const char *src) {
-    uint32_t len = src ? strlen(src) : 0;
-    string_t* p = string_malloc(len);
+void str_grow(str_t* self, uint32_t capacity) {
+    struct _str_head_t *s = STR_OFFSET_HEAD(*self);
+    if (capacity <= s->cap) return;
+    str_t p = str_malloc(capacity);
 
+    memcpy(p, s->data, s->len + 1);
+    STR_OFFSET_HEAD(p)->len = s->len;
+    str_free(s);
+
+    *self = p;
+}
+
+str_t str_copy(str_t src) {
+    str_t p = str_malloc(src ? STR_OFFSET_HEAD(src)->len : 0);
     if (src) {
-        memcpy(p->data, src, len + 1);
-        p->len = len;
+        memcpy(p, src, STR_OFFSET_HEAD(src)->len + 1);
+        STR_OFFSET_HEAD(p)->len = STR_OFFSET_HEAD(src)->len;
     }
-
     return p;
 }
 
-string_t* string_expand(string_t* src, uint32_t capacity) {
-    string_t* p = string_malloc(capacity);
-
-    if (src) {
-        memcpy(p->data, src->data, src->len + 1);
-        p->len = src->len;
-        string_free(src);
-    }
-
-    return p;
+void str_append(str_t* self, const char *src, uint32_t len) {
+    if (!src) return;
+    uint32_t sl = STR_OFFSET_HEAD(*self)->len, nl = sl + len;
+    if (nl > STR_OFFSET_HEAD(*self)->cap) str_grow(self, nl);
+    memcpy(*self + sl, src, len);
+    (*self)[nl] = '\0';
+    STR_OFFSET_HEAD(*self)->len = nl;
 }
 
-string_t* string_clone(string_t* src) {
-    uint32_t cap = src ? src->cap : 0;
-    string_t* p = string_malloc(cap);
-
-    if (src) {
-        memcpy(p->data, src->data, src->len + 1);
-        p->len = src->len;
-    }
-
-    return p;
-}
-
-string_t* string_cat(string_t* dst, const char *src) {
-    uint32_t len, cap, sl = src ? strlen(src) : 0;
-    if (dst) {
-        len = sl + dst->len;
-        cap = dst->cap;
-    } else {
-        len = sl;
-        cap = 0;
-    }
-
-    if (cap < len) {
-        string_t* p = string_malloc(len);
-        if (dst) {
-            memcpy(p->data, dst->data, dst->len + 1);
-            p->len = dst->len;
-            string_free(dst);
-        }
-        dst = p;
-    }
-
-    if (src) {
-        memcpy(dst->data + dst->len, src, sl + 1);
-        dst->len += sl;
-    }
-
-    return dst;
-}
-
-string_t* string_cats(string_t* dst, size_t count, ...) {
-    uint32_t len, cap;
-    if (dst) {
-        len = dst->len;
-        cap = dst->cap;
-    } else {
-        len = 0;
-        cap = 0;
-    }
+void string_cats(str_t* self, int count, ...) {
+    uint32_t len = STR_OFFSET_HEAD(*self)->len, cap = STR_OFFSET_HEAD(*self)->cap;
 
     uint32_t args_len[count];
     va_list args;
+
+    // 计算所有字符串的总长度，加上自身长度，等于将要扩展的长度
     va_start(args, count);
-    for (unsigned i = 0, imax = count; i < imax; ++i) {
+    for (int i = 0, imax = count; i < imax; ++i) {
         char *p = va_arg(args, char*);
         if (p) {
-            size_t n = strlen(p);
-            args_len[i] = n;
-            len += n;
+            args_len[i] = (uint32_t) strlen(p);
+            len += args_len[i];
         }
     }
     va_end(args);
 
-    if (cap < len) {
-        string_t* p = string_malloc(len);
-        if (dst) {
-            memcpy(p->data, dst->data, dst->len + 1);
-            p->len = dst->len;
-            string_free(dst);
-        }
-        dst = p;
-    }
+    if (cap < len) str_grow(self, len);
 
-    char* pdata = dst->data;
-    uint32_t pos = dst->len;
+    char *pos = self + STR_OFFSET_HEAD(self)->len;
     va_start(args, count);
-    for (unsigned i = 0, imax = count; i < imax; ++i) {
-        char *p = va_arg(args, char*);
-        if (p) {
-            uint32_t n = args_len[i];
-            memcpy(pdata + pos, p, n);
-            pos += n;
-        }
+    for (int i = 0, imax = count; i < imax; ++i) {
+        uint32_t al = args_len[i];
+        memcpy(pos, va_arg(args, char*), al);
+        pos += al;
     }
     va_end(args);
-
-    dst->len = len;
-    pdata[len] = '\0';
-
-    return dst;
-}
-
-string_t* string_join(string_t* dst, const string_t* src) {
-    uint32_t len, cap;
-    // 源字符串长度
-    len = src ? src->len : 0;
-    if (dst) {
-        len += dst->len;
-        cap = dst->cap;
-    } else {
-        cap = 0;
-    }
-
-    // 加上追加的字符串，如果容量不足，则重新分配空间
-    if (cap < len) {
-        string_t* p = string_malloc(len);
-        if (dst) {
-            memcpy(p->data, dst->data, dst->len + 1);
-            p->len = dst->len;
-            string_free(dst);
-        }
-        dst = p;
-    }
-
-    if (src)  {
-        memcpy(dst->data + dst->len, src->data, src->len + 1);
-        dst->len = len;
-    }
-
-    return dst;
-}
-
-string_t* string_joins(string_t* dst, size_t count, ...) {
-    uint32_t len, cap;
-    // 原有字符串长度
-    if (dst) {
-        len = dst->len;
-        cap = dst->cap;
-    } else {
-        len = 0;
-        cap = 0;
-    }
-
-    // 计算多个参数的字符串总长度
-    va_list args;
-    va_start(args, count);
-    for (unsigned i = 0, imax = count; i < imax; ++i) {
-        string_t* pa = va_arg(args, string_t*);
-        if (pa)
-            len += pa->len;
-    }
-    va_end(args);
-
-    // 如果源字符串容量不足，则扩展源字符串空间
-    if (cap < len) {
-        string_t* p = string_malloc(len);
-        if (dst) {
-            memcpy(p->data, dst->data, dst->len + 1);
-            p->len = dst->len;
-            string_free(dst);
-        }
-        dst = p;
-    }
-
-    // 将参数的内容挨个追加到源字符串中
-    char* pdata = dst->data;
-    uint32_t pos = dst->len;
-    va_start(args, count);
-    for (unsigned i = 0, imax = count; i < imax; ++i) {
-        string_t* pa = va_arg(args, string_t*);
-        if (pa) {
-            memcpy(pdata + pos, pa->data, pa->len);
-            pos += pa->len;
-        }
-    }
-    va_end(args);
-
-    dst->len = len;
-    pdata[len] = '\0';
-
-    return dst;
+    *pos = '\0';
 }

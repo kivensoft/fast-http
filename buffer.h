@@ -32,7 +32,7 @@ extern "C" {
 #define BUFFER_C1 (1 << BUFFER_B1)
 #define BUFFER_M1 (BUFFER_C1 - 1)
 
-/** buffer_t缓冲区数据结构 */
+// buffer_t缓冲区数据结构
 typedef struct {
     uint32_t                ref;        // 引用计数
     uint32_t                len;        // 缓冲区长度

@@ -53,6 +53,14 @@ void md5_final(md5_ctx_t* md5, uint8_t digest[16]);
  * @param len           要计算的长度(字节为单位)
  * @return              返回dst
  */
+uint8_t* md5_bin(uint8_t dst[16], const void *input, size_t len);
+
+/** 计算md5值的快捷函数, 无需中间众多的转换步骤
+ * @param dst           写入md5结果的地址
+ * @param input         要计算的聂荣地址
+ * @param len           要计算的长度(字节为单位)
+ * @return              返回dst
+ */
 char* md5_string(char dst[33], const void *input, size_t len);
 
 #ifdef __cplusplus

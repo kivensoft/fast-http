@@ -248,13 +248,17 @@ void md5_final (md5_ctx_t* md5, uint8_t digest[16]) {
 	memset(md5, 0, sizeof(*md5));
 }
 
-char* md5_string(char dst[33], const void *input, size_t len) {
-	uint8_t digest[16];
+uint8_t* md5_bin(uint8_t dst[16], const void *input, size_t len) {
 	md5_ctx_t md5;
-
 	md5_init(&md5);
 	md5_update(&md5, input, len);
-	md5_final(&md5, digest);
+	md5_final(&md5, dst);
+	return dst;
+}
+
+char* md5_string(char dst[33], const void *input, size_t len) {
+	uint8_t digest[16];
+	md5_bin(digest, input, len);
 	size_t count = _to_hex(dst, digest, sizeof(digest));
 	dst[count] = '\0';
 	return dst;

@@ -29,27 +29,11 @@
 #define PADDING_CHAR '='
 #define LINE_BREAK_COUNT 76
 
-static const uint8_t base64_enc_map[64] = {
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd',
-    'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
-    'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7',
-    '8', '9', '+', '/'
-};
+static const uint8_t ENC_MAP[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static const uint8_t base64_url_enc_map[64] = {
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
-    'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
-    'U', 'V', 'W', 'X', 'Y', 'Z', 'a', 'b', 'c', 'd',
-    'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
-    'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
-    'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7',
-    '8', '9', '-', '_'
-};
+static const uint8_t URL_ENC_MAP[64] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-static const uint8_t base64_dec_map[128] = {
+static const uint8_t DEC_MAP[128] = {
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
@@ -65,7 +49,7 @@ static const uint8_t base64_dec_map[128] = {
      49,  50,  51, 127, 127, 127, 127, 127
 };
 
-static const uint8_t base64_url_dec_map[128] = {
+static const uint8_t URL_DEC_MAP[128] = {
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
     127, 127, 127, 127, 127, 127, 127, 127, 127, 127,
@@ -142,15 +126,11 @@ size_t base64_encode_custom(uint8_t* dst, const void* src, size_t slen, bool pad
     // 处理剩余不足3字节的内容，剩余字节肯定无需换行，所以无需考虑换行情况
     src_max += 2;
     if (s < src_max) {
-        // *d++ = map[(s[0] >> 2) & 0x3F];
         *d++ = map[s[0] >> 2];
         if (s + 1 < src_max) {
             *d++ = map[((s[0] & 3) << 4) + (s[1] >> 4)];
             *d++ = map[(s[1] & 15) << 2];
-            // *d++ = map[(((s[0] & 3) << 4) + (s[1] >> 4)) & 0x3F];
-            // *d++ = map[((s[1] & 15) << 2) & 0x3F];
         } else {
-            // *d++ = map[((s[0] & 3) << 4) & 0x3F];
             *d++ = map[(s[0] & 3) << 4];
             if (padding) *d++ = PADDING_CHAR;
         }
@@ -161,17 +141,25 @@ size_t base64_encode_custom(uint8_t* dst, const void* src, size_t slen, bool pad
 }
 
 size_t base64_encode(uint8_t* dst, const void* src, size_t slen, bool padding, bool line_break) {
-    return base64_encode_custom(dst, src, slen , padding, line_break, base64_enc_map);
+    return base64_encode_custom(dst, src, slen , padding, line_break, ENC_MAP);
 }
 
 size_t base64_url_encode(uint8_t* dst, const void* src, size_t slen, bool padding, bool line_break) {
-    return base64_encode_custom(dst, src, slen, padding, line_break, base64_url_enc_map);
+    return base64_encode_custom(dst, src, slen, padding, line_break, URL_ENC_MAP);
 }
 
 size_t base64_decode_custom(void* dst, const uint8_t* src, size_t slen, const uint8_t *map) {
+    // 删除末尾的回车换行和=号
+    while (slen--) {
+        uint8_t c = src[slen];
+        if (c != PADDING_CHAR && c != '\n' && c != '\r') break;
+    }
+    ++slen;
+
     uint8_t *d = (uint8_t*)dst, c0, c1, c2, c3;
     const uint8_t *src_max = src + slen - 3;
 
+    // 每次解码4字节
     for (; src < src_max; src += 4, d += 3) {
         if (src[0] == '\r') src += 2;
         c0 = map[src[0]], c1 = map[src[1]], c2 = map[src[2]], c3 = map[src[3]];
@@ -180,6 +168,7 @@ size_t base64_decode_custom(void* dst, const uint8_t* src, size_t slen, const ui
         d[2] = (c2 << 6) | c3;
     }
 
+    // 剩余不足4字节的内容解码
     src_max += 3;
     if (src + 1 < src_max) {
         c0 = map[src[0]], c1 = map[src[1]];
@@ -192,10 +181,60 @@ size_t base64_decode_custom(void* dst, const uint8_t* src, size_t slen, const ui
 }
 
 size_t base64_decode(void* dst, const uint8_t* src, size_t slen) {
-    return base64_decode_custom(dst, src, slen, base64_dec_map);
+    return base64_decode_custom(dst, src, slen, DEC_MAP);
 }
 
 size_t base64_url_decode(void* dst, const uint8_t* src, size_t slen) {
-    return base64_decode_custom(dst, src, slen, base64_url_dec_map);
+    return base64_decode_custom(dst, src, slen, URL_DEC_MAP);
 }
 
+
+//---------------------------------------------------------------------
+#ifdef TEST_BASE64
+#include <stdio.h>
+#include <string.h>
+#include <memory.h>
+#include <assert.h>
+
+int main() {
+    char s[] = "kiven1234567890abcde";
+    char d[] = "a2l2ZW4xMjM0NTY3ODkwYWJjZGU=";
+    int slen = strlen(s), dlen = strlen(d), ti;
+    char senc[dlen + 1], denc[slen + 1];
+    memset(senc, 'x', dlen + 1);
+    memset(denc, 'x', slen + 1);
+
+
+    if ((ti = base64_encode_len(slen, true, false)) != dlen) {
+        printf("base64_encode_len error: expect: %d, actual: %d\n", dlen, ti);
+        return 1;
+    }
+    if ((ti = base64_decode_len(d, dlen)) != slen) {
+        printf("base64_decode_len error: expect: %d, actual: %d\n", slen, ti);
+        return 1;
+    }
+
+    int selen = base64_encode(senc, s, slen, true, false);
+    if (dlen != selen) {
+        printf("base64_encode error: expect: %d, actual: %d\n", dlen, selen);
+        return 1;
+    }
+    if (memcmp(d, senc, dlen)) {
+        printf("base64_encode error: expect: %s, actual: %s\n", d, senc);
+        return 1;
+    }
+
+    int delen = base64_decode(denc, d, dlen);
+    if (slen != delen) {
+        printf("base64_decode error: expect: %d, actual: %d\n", slen, delen);
+        return 1;
+    }
+    if (memcmp(s, denc, slen)) {
+        printf("base64_decode error: expect: %s, actual: %s\n", s, denc);
+        return 1;
+    }
+
+    printf("test runing success.");
+}
+
+#endif

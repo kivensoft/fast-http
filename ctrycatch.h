@@ -5,6 +5,21 @@
 #include <setjmp.h>
 #include <stdbool.h>
 
+/* 例子：
+    try {
+        // do something
+        throw(ArgumentsException);
+        // or
+        throw(ArgumentsException, "description");
+    } catch(ArgumentsException) {
+        // error handling
+    } catch() {
+        // error handling for default case
+    } finally {
+        // cleanup
+    }
+*/
+
 // Some macro magic
 #define CTRYCATCH_CAT(a, ...) CTRYCATCH_PRIMITIVE_CAT(a, __VA_ARGS__)
 #define CTRYCATCH_PRIMITIVE_CAT(a, ...) a ## __VA_ARGS__
@@ -50,18 +65,4 @@ enum exception_type {
 
 #define Exception 0
 
-/*
-try {
-	// do something
-	throw(ArgumentsException);
-	// or
-	throw(ArgumentsException, "description");
-} catch(ArgumentsException) {
-	// error handling
-} catch() {
-	// error handling for default case
-} finally {
-	// cleanup
-}
-*/
 #endif // __CTRYCATCH_H__

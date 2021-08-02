@@ -15,18 +15,13 @@ typedef enum {
     AIDB_ERR_TOO_SMALL, // 文件长度太小
     AIDB_ERR_MAGIC,     // 魔法值不正确
     AIDB_ERR_VERSION,   // 版本号错误
-    AIDB_ERR_CRC32,      // 签名错误
-    AIDB_ERR_PWD,       // 口令校验错误
     AIDB_ERR_WRITE,     // 写入文件错误
-    AIDB_ERR_READ,      // 读取文件错误, 无法读取预期的长度
+    AIDB_ERR_BLOCK,    // 文件格式错误, 包括区块指向的下一区块不存在或已被删除
 } AIDB_ERROR;
 
 // 内部实现的结构，隐藏实现细节
 // extern struct aidb_t;
 // extern struct aidb_iterator_t;
-
-typedef _Bool (*aidb_read_func) (void* param, const char* src, uint32_t len);
-typedef _Bool (*aidb_read_finish_func) (void* param);
 
 // 定义aidb_t类型
 typedef struct aidb_t aidb_t;
@@ -39,10 +34,6 @@ extern size_t aidb_sizeof();
 
 /** 获取aidb_iterator_t迭代器内部结构的长度(字节为单位), 以便于用户自行分配aidb_iterator_t类型的内存 */
 extern size_t aidb_iterator_sizeof();
-
-extern AIDB_ERROR aidb_check(const char* filename, const char* key);
-
-extern AIDB_ERROR aidb_load(aidb_t* aidb, void* param, aidb_read_func on_read, aidb_read_finish_func on_finish);
 
 /** 创建aidb数据库
  * @param aidb      用户分配的aidb句柄地址

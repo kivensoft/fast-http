@@ -10,7 +10,6 @@
 
 #include "uv.h"
 #include "platform.h"
-#include "sharedptr.h"
 #include "buffer.h"
 #include "str.h"
 #include "log.h"
@@ -23,7 +22,7 @@ const char APP_NAME[] = "account info web server";
 const char APP_VERSION[] = "1.02";
 const char APP_COPYLEFT[] = "2019-2020 Kivensoft";
 
-typedef struct {
+typedef struct config_t {
     char* debug;
     char* listen;
     char* make;
@@ -80,7 +79,7 @@ static void usage_chinese() {
 /** 处理命令行参数 */
 void process_cmdline(int argc, char **argv) {
     int c;
-	while ((c = getopt(argc, argv, "dhl:m:p:u:w:x:z")) != -1) {
+	while ((c = getopt(argc, argv, "d:hl:m:p:u:w:x:z")) != -1) {
 		switch (c) {
 			case 'd': g_app_cfg.debug = optarg; break;
 			case 'h': usage(); break;
@@ -127,7 +126,7 @@ void on_idle(uv_idle_t *handle) {
 int on_http_serve(httpctx_t* pctx) {
     httpreq_t* preq = &pctx->req;
     httpres_t* pres = &pctx->res;
-    mem_array_t *reqbuf = &preq->data, *resbuf = &pres->data;
+    mem_array_t *reqbuf = &preq->data;
 
     // 获取url
     char path[preq->path.len + 1];
@@ -136,11 +135,14 @@ int on_http_serve(httpctx_t* pctx) {
 
     const char* cct = "application/json; charset=UTF-8";
 
-    if (httpctx_pathcmp(preq, "/hello/")) {
+    if (httpctx_path_match(preq, "/hello/")) {
         httpctx_set_content_type(pctx, "text/plain");
-        pres->body.pos = mem_array_length(resbuf);
-        pres->body.len = mem_array_append(resbuf, "Hello World!", 12);
-    } else if (httpctx_pathcmp(preq, "/index")) {
+
+        httpctx_body_begin(pctx);
+        httpctx_body_append(pctx, "Hello", 5);
+        httpctx_body_append(pctx, " World!", 7);
+        httpctx_body_end(pctx);
+    } else if (httpctx_path_match(preq, "/index")) {
         httpctx_set_content_type(pctx, cct);
         httpctx_add_header(pctx, "Cookie", "Kiven");
 
@@ -151,10 +153,13 @@ int on_http_serve(httpctx_t* pctx) {
         localtime_r(&t, &tm);
         size_t c = strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
 
-        pres->body.pos = mem_array_length(resbuf);
-        pres->body.len = mem_array_append(resbuf, buf, c);
+        httpctx_set_body(pctx, buf, c);
     } else {
         pres->status = 404;
+        httpctx_set_content_type(pctx, cct);
+
+        const char* text = "{\"code\": 404, \"message\": \"未找到资源\"}";
+        httpctx_set_body(pctx, text, strlen(text));
     }
 
     return 0;
@@ -188,7 +193,7 @@ int main(int argc, char **argv) {
     // uv_idle_init(ploop, &idle);
     // uv_idle_start(&idle, on_idle);
     http_server_t server;
-    http_server(&server, g_app_cfg.listen, 5, on_http_serve);
+    http_server(ploop, &server, g_app_cfg.listen, 5, on_http_serve);
 
     uv_run(ploop, UV_RUN_DEFAULT);
     uv_loop_close(ploop);

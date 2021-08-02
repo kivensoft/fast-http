@@ -2,6 +2,8 @@
 #ifndef __PPNARG_H__
 #define __PPNARG_H__
 
+// example: string_cats(x, PP_ARGS(a, b, c, d))
+// expand:  string_cats(x, 4, a, b, c, d);
 #ifndef PP_NARG
 #   define PP_ARGS(...) PP_NARG(__VA_ARGS__), __VA_ARGS__
 #   define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
@@ -18,9 +20,9 @@
 #endif
 
 /*
-#define STRING_FREE_1(x) string_free(x);
-#define STRING_FREE_2(x1, x2) string_free(x1); string_free(x2);
-#define STRING_FREE_3(x1, x2, x3) string_free(x1); string_free(x2); string_free(x3);
+#define STRING_FREE_1(x) string_release(x);
+#define STRING_FREE_2(x1, x2) string_release(x1); string_release(x2);
+#define STRING_FREE_3(x1, x2, x3) string_release(x1); string_release(x2); string_release(x3);
 
 #define STRING_FREE(...) EXPAND_NARG(STRING_FREE_, __VA_ARGS__)
 

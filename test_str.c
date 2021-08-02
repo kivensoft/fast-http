@@ -22,8 +22,8 @@ void output(const char* name, string_t* src) {
 int main() {
     const char *hw = "hello world";
     const char *name = ", kiven";
-    pstring_t s2 = string_from_cstr(name);
-    pstring_t str = string_from_cstr(hw);
+    string_t* s2 = string_from_cstr(name);
+    string_t* str = string_from_cstr(hw);
     
     typeof(hw) a = "abc";
     typeof(1) b = 1024;
@@ -31,26 +31,26 @@ int main() {
 
     output("str ", str);
 
-    pstring_t str1 = string_copy(str);
+    string_t* str1 = string_add_ref(str);
     output("str1", str1);
 
-    pstring_t str2 = string_clone(str);
+    string_t* str2 = string_clone(str);
     output("str2", str2);
 
-    pstring_t str3 = string_cat(string_copy(str), name);
+    string_t* str3 = string_cat(string_add_ref(str), name);
     output("str3", str3);
 
-    // pstring_t str4 = string_cats(string_copy(str), NULL, name, NULL);
-    pstring_t str4 = string_cats(string_copy(str), PP_ARGS(NULL, name, NULL));
+    // string_t* str4 = string_cats(string_add_ref(str), NULL, name, NULL);
+    string_t* str4 = string_cats(string_add_ref(str), PP_ARGS(NULL, name, NULL));
     output("str4", str4);
 
-    pstring_t str5 = string_join(string_copy(str), s2);
+    string_t* str5 = string_join(string_add_ref(str), s2);
     output("str5", str5);
 
-    pstring_t str6 = string_joins(string_copy(str), PP_ARGS(NULL, s2, NULL));
+    string_t* str6 = string_joins(string_add_ref(str), PP_ARGS(NULL, s2, NULL));
     output("str6", str6);
 
-    string_frees(PP_ARGS(str, str1, str2, str3, str4, str5, str6));
+    string_releases(PP_ARGS(str, str1, str2, str3, str4, str5, str6));
 
     printf("%" PRId64 ", end\n", sizeof(string_t));
 }
